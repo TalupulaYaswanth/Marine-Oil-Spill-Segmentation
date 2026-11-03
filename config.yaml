@@ -47,3 +47,4 @@ phase4_dashboard:
   host: "0.0.0.0"
   default_center: [36.225, -5.137]
   default_zoom: 11
+

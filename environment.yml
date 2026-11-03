@@ -21,3 +21,4 @@ dependencies:
   - tqdm>=4.65.0
   - pip:
       - streamlit-folium>=0.16.0
+
