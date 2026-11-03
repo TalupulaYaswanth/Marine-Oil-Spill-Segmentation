@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyTorch checkpoints and model weights
+checkpoints/
+*.pth
+*.pt
+*.bin
+*.onnx
+
+# Large raster and training patch binaries
+data/patches/
+*.npy
+*.npz
+*.tif
+*.tiff
+*.SAFE/
+*.zip
+*.tar.gz
+
+# Keep sample AIS data
+!data/sample_ais.csv
+
+# Output artifacts
+output/
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Streamlit local settings
+.streamlit/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
