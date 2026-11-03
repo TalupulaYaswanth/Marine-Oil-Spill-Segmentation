@@ -1,0 +1,49 @@
+# ==============================================================================
+# Marine Oil Spill Segmentation & Vessel Attribution Configuration
+# Project: CSE471
+# ==============================================================================
+
+project:
+  name: "Marine Oil Spill Detection & Vessel Attribution"
+  version: "1.0.0"
+  random_seed: 42
+
+# Phase 1: Geospatial SAR & AIS Preprocessing
+phase1_preprocessing:
+  time_window_hours: 3.0
+  spatial_buffer_deg: 0.05
+  convert_to_db: true
+  clip_percentiles: [1.0, 99.0]
+  crs_target: "EPSG:4326"
+  epsilon: 1.0e-7
+
+# Phase 2: U-Net Deep Learning Segmentation
+phase2_segmentation:
+  patch_size: [256, 256]
+  in_channels: 1
+  out_channels: 1
+  features: [32, 64, 128, 256, 512]
+  dropout_p: 0.1
+  batch_size: 4
+  epochs: 10
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  bce_weight: 0.5
+  dice_weight: 0.5
+  smooth: 1.0e-6
+
+# Phase 3: Vessel Detection & Attribution Engine
+phase3_attribution:
+  distance_threshold_km: 25.0
+  spatial_weight: 0.6
+  temporal_weight: 0.4
+  temporal_sigma_hours: 2.0
+  causality_tolerance_hours: -0.25
+  causality_penalty_factor: 0.2
+
+# Phase 4: Streamlit Interactive Dashboard
+phase4_dashboard:
+  port: 8501
+  host: "0.0.0.0"
+  default_center: [36.225, -5.137]
+  default_zoom: 11
