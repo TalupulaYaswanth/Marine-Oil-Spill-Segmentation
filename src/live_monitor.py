@@ -230,5 +230,7 @@ class LiveSpillMonitorService:
                     "is_suspect": v["is_suspect"]
                 })
 
-        return pd.DataFrame(records)
+        df = pd.DataFrame(records)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df
 

@@ -763,11 +763,17 @@ def main():
     with tab_analytics:
         st.markdown("### Multi-Vessel Speed & Heading Telemetry")
         import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
-        for mmsi, grp in ais_df.groupby("mmsi"):
-            grp_s = grp.sort_values("timestamp")
+        # Standardize timestamps for matplotlib unit conversion
+        ais_df_plot = ais_df.copy()
+        ais_df_plot["plot_time"] = pd.to_datetime(ais_df_plot["timestamp"], utc=True).dt.tz_convert(None)
+        spill_time_dt = pd.to_datetime(spill_time).tz_convert(None)
+
+        for mmsi, grp in ais_df_plot.groupby("mmsi"):
+            grp_s = grp.sort_values("plot_time")
             mmsi_int = int(mmsi)
             v_name = str(grp_s.iloc[0].get("vessel_name", f"MMSI {mmsi_int}"))
             is_top = (not ranked_suspects.empty and mmsi_int == int(top_suspect["mmsi"]))
@@ -775,11 +781,11 @@ def main():
             lw = 2.5 if is_top else 1.2
             label = f"{v_name} ({'Primary Suspect' if is_top else 'Ambient'})"
 
-            ax1.plot(grp_s["timestamp"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
-            ax2.plot(grp_s["timestamp"], grp_s["course"], marker="s", label=label, color=color, linewidth=lw)
+            ax1.plot(grp_s["plot_time"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
+            ax2.plot(grp_s["plot_time"], grp_s["course"], marker="s", label=label, color=color, linewidth=lw)
 
-        ax1.axvline(spill_time, color="#F39C12", linestyle="--", label=f"Satellite Image ({spill_time_str[:16]})")
-        ax2.axvline(spill_time, color="#F39C12", linestyle="--")
+        ax1.axvline(spill_time_dt, color="#F39C12", linestyle="--", label=f"Satellite Image ({spill_time_str[:16]})")
+        ax2.axvline(spill_time_dt, color="#F39C12", linestyle="--")
 
         ax1.set_ylabel("Speed (knots)")
         ax1.set_title("Vessel Speed Over Ground (SOG)")
@@ -789,6 +795,7 @@ def main():
         ax2.set_ylabel("Course Over Ground (°)")
         ax2.set_title("Vessel Navigation Heading (COG)")
         ax2.set_xlabel("UTC Timestamp")
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
         ax2.grid(True, linestyle=":", alpha=0.6)
 
         fig.tight_layout()
