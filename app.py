@@ -45,8 +45,12 @@ from src.attribution.engine import VesselAttributionEngine
 from src.attribution.drift_physics import HydrodynamicDriftModel
 from src.ais_loader import UniversalAISLoader
 from src.stac_client import Sentinel1STACClient
-from src.live_monitor import LiveSpillMonitorService
 from src.vessel_image_api import VesselImageAPI
+
+import importlib
+import src.live_monitor
+importlib.reload(src.live_monitor)
+from src.live_monitor import LiveSpillMonitorService
 
 
 # ==============================================================================
@@ -429,16 +433,19 @@ def main():
             st.rerun()
 
         live_spills = LiveSpillMonitorService.get_live_spills()
-        spill_names = [f"🔴 [{s['threat_level']}] {s['name']} (Reported {s['elapsed_str']})" for s in live_spills]
+        spill_names = [
+            f"🔴 [{s.get('threat_level', 'ACTIVE')}] {s.get('name', 'Marine Spill')} (Reported {s.get('elapsed_str', 'Recently')})"
+            for s in live_spills
+        ]
         selected_label = st.sidebar.selectbox("Active Spill Emergency Feed:", spill_names)
         selected_idx = spill_names.index(selected_label)
         selected_spill = live_spills[selected_idx]
 
-        incident_name = f"🔴 LIVE EMERGENCY: {selected_spill['name']}"
-        incident_badge = f"{selected_spill['threat_level']} THREAT | Status: {selected_spill['status']} | Reported {selected_spill['elapsed_str']}"
+        incident_name = f"🔴 LIVE EMERGENCY: {selected_spill.get('name', 'Marine Spill')}"
+        incident_badge = f"{selected_spill.get('threat_level', 'ACTIVE')} THREAT | Status: {selected_spill.get('status', 'Active')} | Reported {selected_spill.get('elapsed_str', 'Recently')}"
         incident_desc = (
-            f"**Location:** {selected_spill['location']} | **Commodity:** {selected_spill['commodity']} | "
-            f"**Estimated Volume:** {selected_spill['estimated_spill_volume']} | **Lead Agency:** {selected_spill['lead_agency']}"
+            f"**Location:** {selected_spill.get('location', 'Coastal Waters')} | **Commodity:** {selected_spill.get('commodity', 'Petroleum')} | "
+            f"**Estimated Volume:** {selected_spill.get('estimated_spill_volume', 'Assessing')} | **Lead Agency:** {selected_spill.get('lead_agency', 'Coast Guard')}"
         )
 
         c_lat, c_lon = selected_spill["latitude"], selected_spill["longitude"]
