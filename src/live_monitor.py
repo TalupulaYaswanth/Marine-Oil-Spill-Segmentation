@@ -10,6 +10,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 import urllib.request
+import pandas as pd
 
 
 class LiveSpillMonitorService:
@@ -230,3 +231,4 @@ class LiveSpillMonitorService:
                 })
 
         return pd.DataFrame(records)
+
