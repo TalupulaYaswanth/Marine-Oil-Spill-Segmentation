@@ -415,9 +415,9 @@ def main():
     case_mode = st.sidebar.radio(
         "Select Live Stream / Benchmark Incident:",
         [
-            "🔴 LIVE Marine Spill Surveillance & Global NOAA Emergency Feed",
-            "🌊 MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
-            "🚢 Strait of Gibraltar Marine Highway — IMO Traffic Scheme",
+            "🔴 LIVE Real-Time Surveillance & Active NOAA Spills",
+            "🌊 Historical Benchmark 1: MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
+            "🚢 Historical Benchmark 2: Strait of Gibraltar Marine Highway Corridor",
             "📂 Custom AIS Upload (NOAA Marine Cadastre / DMA)",
             "🛰️ Live Sentinel-1 STAC Catalog Search"
         ]
@@ -425,14 +425,17 @@ def main():
 
     # Mode 0: LIVE Marine Spill Surveillance & NOAA Emergency Feed
     if "LIVE" in case_mode:
+        if st.sidebar.button("🔄 Sync Live Telemetry (Refresh Now)"):
+            st.rerun()
+
         live_spills = LiveSpillMonitorService.get_live_spills()
-        spill_names = [f"{s['id']}: {s['name']} ({s['location']})" for s in live_spills]
+        spill_names = [f"🔴 [{s['threat_level']}] {s['name']} (Reported {s['elapsed_str']})" for s in live_spills]
         selected_label = st.sidebar.selectbox("Active Spill Emergency Feed:", spill_names)
         selected_idx = spill_names.index(selected_label)
         selected_spill = live_spills[selected_idx]
 
         incident_name = f"🔴 LIVE EMERGENCY: {selected_spill['name']}"
-        incident_badge = f"{selected_spill['threat_level']} THREAT | Status: {selected_spill['status']}"
+        incident_badge = f"{selected_spill['threat_level']} THREAT | Status: {selected_spill['status']} | Reported {selected_spill['elapsed_str']}"
         incident_desc = (
             f"**Location:** {selected_spill['location']} | **Commodity:** {selected_spill['commodity']} | "
             f"**Estimated Volume:** {selected_spill['estimated_spill_volume']} | **Lead Agency:** {selected_spill['lead_agency']}"
@@ -455,12 +458,11 @@ def main():
         ]
         sar_bounds = [c_lon - 0.25, c_lat - 0.25, c_lon + 0.25, c_lat + 0.25]
 
-        # Live Radar AIS Telemetry
+        # Live Radar AIS Telemetry (Ending at current minute of today)
         ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6)
 
         # Orbital overpass schedule
         next_pass = LiveSpillMonitorService.compute_next_sentinel1_pass(c_lat, c_lon)
-
         default_wind_spd = 14.0
         default_wind_dir = 110.0
         default_curr_spd = 0.35
@@ -624,6 +626,17 @@ def main():
     # -------------------------------------------------------------
     # Case Study Overview Banner
     # -------------------------------------------------------------
+    if "LIVE" in case_mode:
+        now_utc = datetime.now(timezone.utc)
+        st.markdown(
+            f'<div style="background-color:#0D2128; border:1px solid #00ADB5; padding:8px 14px; border-radius:6px; margin-bottom:12px; font-size:13px; color:#E0F7FA;">'
+            f'🟢 <b>REAL-TIME SURVEILLANCE FEED ONLINE</b> &nbsp;|&nbsp; '
+            f'System UTC Clock: <b>{now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")}</b> &nbsp;|&nbsp; '
+            f'Status: <b>Streaming Active AIS Radar</b>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
     st.markdown(f'<div class="incident-badge">{incident_badge}</div>', unsafe_allow_html=True)
     st.subheader(incident_name)
     st.markdown(f"*{incident_desc}*")
