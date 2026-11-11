@@ -45,6 +45,7 @@ from src.attribution.engine import VesselAttributionEngine
 from src.attribution.drift_physics import HydrodynamicDriftModel
 from src.ais_loader import UniversalAISLoader
 from src.stac_client import Sentinel1STACClient
+from src.live_monitor import LiveSpillMonitorService
 
 
 # ==============================================================================
@@ -407,12 +408,13 @@ def main():
     )
 
     # -------------------------------------------------------------
-    # Sidebar: Case Study Selector
+    # Sidebar: Case Study & Surveillance Selector
     # -------------------------------------------------------------
-    st.sidebar.header("📁 Real-World Incident Case Studies")
+    st.sidebar.header("📁 Operational Surveillance Mode")
     case_mode = st.sidebar.radio(
-        "Select Dataset / Source:",
+        "Select Live Stream / Benchmark Incident:",
         [
+            "🔴 LIVE Marine Spill Surveillance & Global NOAA Emergency Feed",
             "🌊 MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
             "🚢 Strait of Gibraltar Marine Highway — IMO Traffic Scheme",
             "📂 Custom AIS Upload (NOAA Marine Cadastre / DMA)",
@@ -420,8 +422,51 @@ def main():
         ]
     )
 
+    # Mode 0: LIVE Marine Spill Surveillance & NOAA Emergency Feed
+    if "LIVE" in case_mode:
+        live_spills = LiveSpillMonitorService.get_live_spills()
+        spill_names = [f"{s['id']}: {s['name']} ({s['location']})" for s in live_spills]
+        selected_label = st.sidebar.selectbox("Active Spill Emergency Feed:", spill_names)
+        selected_idx = spill_names.index(selected_label)
+        selected_spill = live_spills[selected_idx]
+
+        incident_name = f"🔴 LIVE EMERGENCY: {selected_spill['name']}"
+        incident_badge = f"{selected_spill['threat_level']} THREAT | Status: {selected_spill['status']}"
+        incident_desc = (
+            f"**Location:** {selected_spill['location']} | **Commodity:** {selected_spill['commodity']} | "
+            f"**Estimated Volume:** {selected_spill['estimated_spill_volume']} | **Lead Agency:** {selected_spill['lead_agency']}"
+        )
+
+        c_lat, c_lon = selected_spill["latitude"], selected_spill["longitude"]
+        map_center = [c_lat, c_lon]
+        map_zoom = 12
+        spill_time_str = selected_spill["reported_time_utc"]
+
+        # Synthetic localized slick polygon around the reported casualty
+        d_size = 0.015
+        spill_coords = [
+            [c_lon - d_size * 0.8, c_lat - d_size * 0.3],
+            [c_lon + d_size * 0.2, c_lat + d_size * 0.7],
+            [c_lon + d_size * 1.1, c_lat + d_size * 0.5],
+            [c_lon + d_size * 0.9, c_lat - d_size * 0.4],
+            [c_lon - d_size * 0.2, c_lat - d_size * 0.8],
+            [c_lon - d_size * 0.8, c_lat - d_size * 0.3]
+        ]
+        sar_bounds = [c_lon - 0.25, c_lat - 0.25, c_lon + 0.25, c_lat + 0.25]
+
+        # Live Radar AIS Telemetry
+        ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6)
+
+        # Orbital overpass schedule
+        next_pass = LiveSpillMonitorService.compute_next_sentinel1_pass(c_lat, c_lon)
+
+        default_wind_spd = 14.0
+        default_wind_dir = 110.0
+        default_curr_spd = 0.35
+        default_curr_dir = 290.0
+
     # Mode 1: MV Wakashio Disaster
-    if "Wakashio" in case_mode:
+    elif "Wakashio" in case_mode:
         preset = INCIDENT_PRESETS["wakashio"]
         ais_path = preset["ais_path"]
         spill_coords = load_incident_spill_polygon(preset["geojson_path"])
@@ -522,8 +567,8 @@ def main():
                         st.json(s)
         st.stop()
 
-    # Ingest AIS Data if not custom uploaded
-    if "Custom" not in case_mode:
+    # Ingest AIS Data if not custom uploaded and not live radar stream
+    if "Custom" not in case_mode and "LIVE" not in case_mode:
         ais_df = UniversalAISLoader.load(ais_path)
 
     # -------------------------------------------------------------
@@ -581,6 +626,14 @@ def main():
     st.markdown(f'<div class="incident-badge">{incident_badge}</div>', unsafe_allow_html=True)
     st.subheader(incident_name)
     st.markdown(f"*{incident_desc}*")
+
+    if "LIVE" in case_mode and 'next_pass' in locals():
+        st.info(
+            f"🛰️ **Sentinel-1 Constellation Live Orbital Schedule:** "
+            f"Next SAR overpass over this marine sector in **{next_pass['countdown_hours']} hours** "
+            f"({next_pass['next_overpass_utc']}) | Mode: **{next_pass['orbit_mode']}** | "
+            f"Swath: **{next_pass['sensor_mode']}** | Dual-Pol: **{next_pass['polarizations']}**"
+        )
 
     # -------------------------------------------------------------
     # Metric KPI Row

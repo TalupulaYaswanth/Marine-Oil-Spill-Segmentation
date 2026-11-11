@@ -148,3 +148,4 @@ class UniversalAISLoader:
             out_df["vessel_type"] = out_df["vessel_type"].apply(map_vessel_type)
 
         return out_df.sort_values(by=["mmsi", "timestamp"]).reset_index(drop=True)
+

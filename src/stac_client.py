@@ -108,3 +108,4 @@ class Sentinel1STACClient:
 
         # If live network unavailable (e.g. offline sandbox or remote firewall), return real benchmark scenes
         return self.CACHED_SCENES
+
