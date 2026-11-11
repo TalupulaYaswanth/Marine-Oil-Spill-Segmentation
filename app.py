@@ -46,6 +46,7 @@ from src.attribution.drift_physics import HydrodynamicDriftModel
 from src.ais_loader import UniversalAISLoader
 from src.stac_client import Sentinel1STACClient
 from src.live_monitor import LiveSpillMonitorService
+from src.vessel_image_api import VesselImageAPI
 
 
 # ==============================================================================
@@ -709,19 +710,43 @@ def main():
             st.warning(f"No vessels detected within the {threshold_km} km search radius.")
         else:
             top = ranked_suspects.iloc[0]
+            vessel_img = VesselImageAPI.get_vessel_details(
+                mmsi=int(top["mmsi"]),
+                imo=int(top.get("imo", 0)) if pd.notna(top.get("imo")) else 0,
+                name=str(top.get("vessel_name", ""))
+            )
+
+            # High-Impact Primary Suspect Dossier Card
             st.markdown(f"""
             <div class="suspect-card-rank1">
-                <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Identified: {top.get('vessel_name', 'MMSI ' + str(int(top['mmsi'])))}</h3>
-                <p><b>Attribution Confidence Score:</b> <span style="font-size:20px; color:#00ADB5;">{top['attribution_score']:.4f} / 1.0000</span></p>
-                <ul>
-                    <li><b>Vessel Type:</b> {top.get('vessel_type', 'N/A')} | <b>MMSI:</b> {int(top['mmsi'])} | <b>IMO:</b> {top.get('imo', 'N/A')}</li>
-                    <li><b>Closest Approach Distance:</b> {top['closest_distance_km']:.3f} km from observed slick</li>
-                    <li><b>Temporal Alignment:</b> {top['time_delta_hours']:+.2f} hours offset from satellite imaging pass</li>
-                    <li><b>Speed & Heading at Closest Approach:</b> {top['closest_speed_knots']:.1f} knots at {top['closest_course_deg']:.0f}°</li>
-                    <li><b>Physical Causality Verified:</b> {'✅ Valid (Vessel present prior to or during satellite observation)' if top['is_causally_valid'] else '❌ Non-causal'}</li>
-                </ul>
+                <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Vessel Identified: {vessel_img.get('vessel_name', 'MMSI ' + str(int(top['mmsi'])))}</h3>
             </div>
             """, unsafe_allow_html=True)
+
+            card_col1, card_col2 = st.columns([1, 2])
+            with card_col1:
+                st.image(
+                    vessel_img["image_url"],
+                    caption=f"{vessel_img['caption']}\n(Source: {vessel_img['photo_attribution']})",
+                    width="stretch"
+                )
+                if "external_photo_link" in vessel_img:
+                    st.markdown(f"[🔗 View MarineTraffic Live Photo Gallery]({vessel_img['external_photo_link']})")
+                else:
+                    st.markdown(f"[🔗 MarineTraffic Ship Profile](https://www.marinetraffic.com/en/ais/details/ships/mmsi:{int(top['mmsi'])})")
+
+            with card_col2:
+                st.markdown(f"""
+                - **Attribution Confidence Score:** <span style="font-size:20px; font-weight:700; color:#00ADB5;">{top['attribution_score']:.4f} / 1.0000</span>
+                - **Flag State:** {vessel_img.get('flag', 'International 🌐')} | **IMO:** `{vessel_img.get('imo', top.get('imo', 'N/A'))}` | **MMSI:** `{int(top['mmsi'])}`
+                - **Vessel Classification:** {vessel_img.get('vessel_type', top.get('vessel_type', 'N/A'))}
+                - **Dimensions (LOA x Beam):** {vessel_img.get('length_beam', 'N/A')} | **Year Built:** {vessel_img.get('built_year', 'N/A')}
+                - **Fleet Operator:** {vessel_img.get('owner', 'Commercial Fleet')}
+                - **Point of Closest Approach:** **{top['closest_distance_km']:.3f} km** from observed spill perimeter
+                - **Temporal Offset:** **{top['time_delta_hours']:+.2f} hours** from satellite SAR acquisition
+                - **Speed & Heading:** **{top['closest_speed_knots']:.1f} knots** at **{top['closest_course_deg']:.0f}°**
+                - **Physical Causality Verified:** {'✅ Valid (Vessel present prior to or during satellite observation)' if top['is_causally_valid'] else '❌ Non-causal'}
+                """, unsafe_allow_html=True)
 
             # Clean dataframe for display
             disp_df = ranked_suspects.copy()
