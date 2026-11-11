@@ -1,0 +1,38 @@
+{
+  "incident_name": "MV Wakashio Coral Reef Grounding & Bunker Fuel Spill",
+  "copernicus_ems_activation": "EMSR449 (Rapid Mapping)",
+  "location": "Pointe d'Esny Lagoon, Mauritius",
+  "primary_suspect": {
+    "vessel_name": "MV WAKASHIO",
+    "mmsi": 372711000,
+    "imo": 9337779,
+    "flag": "Panama",
+    "vessel_type": "Bulk Carrier (Capesize)",
+    "length_m": 300.0,
+    "beam_m": 50.0,
+    "deadweight_tonnage": 203130,
+    "cargo_on_board": "3,894 tonnes VLSFO, 207 tonnes Diesel, 90 tonnes Lube Oil"
+  },
+  "satellite_scene": {
+    "satellite": "Sentinel-1A",
+    "sensor_mode": "IW_GRDH_1SDV",
+    "scene_id": "S1A_IW_GRDH_1SDV_20200810T015311_20200810T015336_033839_03ECE7_9D1F",
+    "acquisition_time_utc": "2020-08-10T01:53:11Z",
+    "orbit": 114,
+    "polarization": "VV+VH",
+    "bbox_wgs84": [
+      57.45,
+      -20.65,
+      57.95,
+      -20.25
+    ]
+  },
+  "environmental_forcing": {
+    "wind_speed_knots": 18.5,
+    "wind_speed_ms": 9.5,
+    "wind_direction_from_deg": 115.0,
+    "ocean_current_speed_ms": 0.32,
+    "ocean_current_direction_deg": 310.0,
+    "water_temp_c": 24.2
+  }
+}

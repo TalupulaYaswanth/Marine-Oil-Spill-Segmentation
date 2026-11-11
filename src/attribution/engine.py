@@ -152,6 +152,10 @@ class VesselAttributionEngine:
 
             suspect_records.append({
                 "mmsi": int(mmsi),
+                "vessel_name": str(closest_ping.get("vessel_name", f"Vessel-{str(mmsi)[-4:]}")),
+                "imo": int(closest_ping.get("imo", 0)) if pd.notna(closest_ping.get("imo")) else 0,
+                "vessel_type": str(closest_ping.get("vessel_type", "Commercial Vessel")),
+                "status": str(closest_ping.get("status", "Underway")),
                 "attribution_score": round(float(composite_score), 4),
                 "closest_distance_km": round(float(closest_dist_km), 3),
                 "time_delta_hours": round(float(time_delta_hours), 2),
@@ -217,6 +221,10 @@ class VesselAttributionEngine:
 
             suspect_records.append({
                 "mmsi": int(mmsi),
+                "vessel_name": str(closest_ping.get("vessel_name", f"Vessel-{str(mmsi)[-4:]}")),
+                "imo": int(closest_ping.get("imo", 0)) if pd.notna(closest_ping.get("imo")) else 0,
+                "vessel_type": str(closest_ping.get("vessel_type", "Commercial Vessel")),
+                "status": str(closest_ping.get("status", "Underway")),
                 "attribution_score": round(float(composite_score), 4),
                 "closest_distance_km": round(float(closest_dist_km), 3),
                 "time_delta_hours": round(float(time_delta_hours), 2),
@@ -231,9 +239,9 @@ class VesselAttributionEngine:
 
     def _finalize_rankings(self, records: List[Dict[str, Any]], as_gdf: bool = True) -> Any:
         cols = [
-            "rank", "mmsi", "attribution_score", "closest_distance_km",
-            "time_delta_hours", "closest_timestamp", "closest_speed_knots",
-            "closest_course_deg", "total_pings", "is_causally_valid"
+            "rank", "mmsi", "vessel_name", "vessel_type", "attribution_score", "closest_distance_km",
+            "time_delta_hours", "closest_speed_knots", "closest_course_deg",
+            "is_causally_valid", "closest_timestamp", "imo", "status", "total_pings"
         ]
         if as_gdf:
             cols.append("geometry")

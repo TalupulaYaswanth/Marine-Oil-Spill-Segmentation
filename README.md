@@ -8,136 +8,96 @@
 ## Architecture Overview
 
 ```
-                   ┌──────────────────────────────────────────────┐
-                   │    Phase 1: Geospatial Data Preprocessing    │
-                   │    • SAR Radiometric Calibration & dB Scaling│
-                   │    • AIS Spatiotemporal Bounding Box Match   │
-                   └──────────────────────┬───────────────────────┘
-                                          │
-                                          ▼
-                   ┌──────────────────────────────────────────────┐
-                   │    Phase 2: Deep Learning Spill Segmentation │
-                   │    • Custom SAR Dataset & Augmentations      │
-                   │    • 1-Channel U-Net Architecture            │
-                   │    • Compound BCE + Soft Dice Loss           │
-                   │    • Metric Tracking (IoU, F1, Prec, Rec)    │
-                   └──────────────────────┬───────────────────────┘
-                                          │
-                                          ▼
-                   ┌──────────────────────────────────────────────┐
-                   │    Phase 3: Vessel Attribution Engine        │
-                   │    • Spill Polygon Metric Distance Engine    │
-                   │    • Automatic Local UTM Zone Reprojection   │
-                   │    • Spatiotemporal Attribution Scoring      │
-                   │    • Suspect Ranking & GeoJSON/CSV Reporting │
-                   └──────────────────────┬───────────────────────┘
-                                          │
-                                          ▼
-                   ┌──────────────────────────────────────────────┐
-                   │    Phase 4: Interactive Dashboard (Streamlit)│
-                   │    • Interactive Folium/Leaflet Marine Map   │
-                   │    • Overlay SAR Bounds, Spill Mask & Tracks │
-                   │    • Real-Time Slider Attribution Filtering  │
-                   │    • Forensic Suspect Reports & Analytics    │
-                   └──────────────────────────────────────────────┘
+                   ┌────────────────────────────────────────────────────────┐
+                   │        Phase 1: Geospatial Remote Sensing Ingestion    │
+                   │        • Sentinel-1 SAR Calibration & Decibel Scaling  │
+                   │        • Universal Multi-Format AIS Ingestion (NOAA/DMA│
+                   └───────────────────────────┬────────────────────────────┘
+                                               │
+                                               ▼
+                   ┌────────────────────────────────────────────────────────┐
+                   │        Phase 2: Deep Learning Spill Segmentation       │
+                   │        • Single-Channel SAR U-Net Architecture         │
+                   │        • Compound BCE + Soft Dice Loss Formulation     │
+                   │        • Jaccard Index (IoU) & F1-Score Evaluation     │
+                   └───────────────────────────┬────────────────────────────┘
+                                               │
+                                               ▼
+                   ┌────────────────────────────────────────────────────────┐
+                   │        Phase 3: Vessel Detection & Attribution Engine  │
+                   │        • Local Metric UTM Projection (Sub-meter Accuracy│
+                   │        • NOAA ADIOS Hydrodynamic Leeway Drift Physics  │
+                   │        • Spatiotemporal Attribution & Causality Scoring │
+                   └───────────────────────────┬────────────────────────────┘
+                                               │
+                                               ▼
+                   ┌────────────────────────────────────────────────────────┐
+                   │        Phase 4: Real-World Operational Dashboard       │
+                   │        • Copernicus EMS EMSR449 Real Incident Benchmark│
+                   │        • Open STAC Catalog Search (Planetary Computer) │
+                   │        • Interactive Marine Navigation Map (Folium)    │
+                   └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Project Structure
+## Real-World Case Studies Included
 
-```
-CSE471/
-├── requirements.txt            # Dependency specifications
-├── app.py                      # Phase 4: Streamlit interactive visualization dashboard
-├── run_phase1.py               # Phase 1: SAR & AIS preprocessing runner
-├── generate_sample_data.py     # Generates synthetic SAR GeoTIFF & sample AIS CSV
-├── train_segmentation.py       # Phase 2: U-Net model training & validation runner
-├── generate_sample_patches.py  # Generates 256x256 SAR patches & binary masks
-├── run_phase3.py               # Phase 3: Vessel detection & attribution engine runner
-├── README.md                   # Complete system documentation
-├── data/
-│   ├── sample_ais.csv          # Sample AIS tracking data
-│   └── patches/                # Generated synthetic SAR training/val patches
-├── output/                     # Generated GeoJSONs, CSV reports, and GeoTIFFs
-└── src/
-    ├── __init__.py
-    ├── sar_preprocessor.py     # SAR image loading, NoData masking, dB scaling
-    ├── ais_preprocessor.py     # AIS parsing, GeoPandas conversion, spatiotemporal filter
-    ├── pipeline.py             # Phase 1 end-to-end orchestration
-    ├── segmentation/
-    │   ├── dataset.py          # Custom PyTorch Dataset with radar augmentations
-    │   ├── unet.py             # 1-channel U-Net architecture
-    │   ├── losses.py           # Combined BCE + Dice Loss & MetricTracker
-    │   └── trainer.py          # Training and validation loop
-    └── attribution/
-        ├── vectorizer.py       # Raster mask to Shapely Polygon vectorizer
-        └── engine.py           # Spatiotemporal attribution scoring engine
-```
+### 1. 🌊 The MV Wakashio Coral Reef Disaster (Mauritius, Aug 2020)
+- **Copernicus EMS Rapid Mapping Activation:** `EMSR449`
+- **Primary Suspect:** *MV WAKASHIO* (MMSI: `372711000`, IMO: `9337779`, Flag: Panama, 300m Capesize Bulk Carrier, 203,130 DWT)
+- **Grounded Location:** Pointe d'Esny coral reef (`-20.4430°S, 57.7470°E`), spilling ~1,000 tonnes of Very Low Sulphur Fuel Oil (VLSFO) into the marine reserve.
+- **Satellite Scene:** Sentinel-1A IW GRD (`S1A_IW_GRDH_1SDV_20200810T015311_...`)
+- **Telemetry Monitored:** MV Wakashio, Mauritian National Coast Guard (*CGS Barracuda*), salvage tugs (*Sir Gaetan Duval*), bunker tanker (*Tresta Star*), and passing container liners (*MSC Shannon*).
+- **Physical Environmental Forcing:** Southeast Trade Winds (115° at 18.5 knots), South Equatorial Current (0.32 m/s flowing Northwest directly into the lagoon).
+
+### 2. 🚢 Strait of Gibraltar Marine Highway Corridor
+- **Maritime Setting:** High-density Traffic Separation Scheme (TSS) linking the Atlantic Ocean and Mediterranean Sea.
+- **Vessel Traffic:** Real IMO-registered Crude Oil Tankers (*Alexandra I*), Ultra Large Container Ships (*CMA CGM Montmartre*), and regional pilot tugs (*VB Gibraltar*).
+- **Satellite Scene:** Sentinel-1A IW GRD (`S1A_IW_GRDH_1SDV_20240515T063012_...`)
 
 ---
 
-## Phase 1: Geospatial Data Preprocessing
+## Key Modules & Capabilities
 
+1. **Universal Real-World AIS Loader ([`src/ais_loader.py`](file:///c:/Users/V/OneDrive/ドキュメント/Rockstar%20Games/CSE471/src/ais_loader.py)):**
+   - Ingests and auto-standardizes NOAA Marine Cadastre, Danish Maritime Authority (DMA), Spire, and MarineTraffic CSV files.
+   - Automatically maps `MMSI`, `BaseDateTime`, `SOG` (Speed), `COG` (Course), `VesselName`, `IMO`, and `ShipType`.
+
+2. **Hydrodynamic Leeway Drift Physics ([`src/attribution/drift_physics.py`](file:///c:/Users/V/OneDrive/ドキュメント/Rockstar%20Games/CSE471/src/attribution/drift_physics.py)):**
+   - Implements the **NOAA ADIOS / French CEDRE** maritime leeway formulation:
+     $$\vec{U}_{\text{drift}} = \vec{U}_{\text{current}} + \alpha \cdot \vec{U}_{\text{wind}} + \vec{U}_{\text{stokes}}$$
+     with windage leeway $\alpha = 3.2\%$ and Coriolis deflection angle ($\pm 15^\circ$ to the right in NH, left in SH).
+   - Backtracks the satellite-observed slick into the past to pinpoint the precise discharge origin coordinates!
+
+3. **Open STAC Satellite Catalog Client ([`src/stac_client.py`](file:///c:/Users/V/OneDrive/ドキュメント/Rockstar%20Games/CSE471/src/stac_client.py)):**
+   - Connects directly to **Microsoft Planetary Computer** and **Earth Search (AWS)** STAC APIs.
+   - Allows users to search Sentinel-1 SAR GRD scenes for any bounding box and date range worldwide.
+
+4. **Interactive Dashboard ([`app.py`](file:///c:/Users/V/OneDrive/ドキュメント/Rockstar%20Games/CSE471/app.py)):**
+   - Full-featured Streamlit application with interactive Folium marine maps, real vessel names, speed/heading telemetry profiles, and downloadable forensic attribution reports.
+
+---
+
+## Quickstart
+
+### 1. Environment Setup
 ```bash
-# 1. Generate sample AIS and SAR files
-python generate_sample_data.py
+# Using conda
+conda env create -f environment.yml
+conda activate oilspill-env
 
-# 2. Run Preprocessing Pipeline
-python run_phase1.py \
-  --sar-path data/S1A_IW_GRDH_1SDV_20240515T063000_sample.tif \
-  --ais-path data/sample_ais.csv \
-  --output-dir output/phase1 \
-  --time-window-hours 3.0 \
-  --spatial-buffer-deg 0.05
+# Or using pip
+pip install -r requirements.txt
 ```
 
----
-
-## Phase 2: Oil Spill Semantic Segmentation
-
+### 2. Populate Real-World Datasets
 ```bash
-# 1. Generate synthetic SAR patches and binary masks
-python generate_sample_patches.py
-
-# 2. Train U-Net model
-python train_segmentation.py \
-  --train-images data/patches/train/images \
-  --train-masks data/patches/train/masks \
-  --val-images data/patches/val/images \
-  --val-masks data/patches/val/masks \
-  --epochs 10 \
-  --batch-size 4 \
-  --lr 0.001
+python src/setup_real_world_data.py
 ```
 
----
-
-## Phase 3: Vessel Detection & Attribution Engine
-
-```bash
-python run_phase3.py \
-  --ais-path data/sample_ais.csv \
-  --output-dir output/phase3 \
-  --threshold-km 25.0 \
-  --spill-timestamp 2024-05-15T06:30:00Z
-```
-
----
-
-## Phase 4: Interactive Visualization Dashboard
-
-Launch the Streamlit web dashboard:
+### 3. Launch Interactive Dashboard
 ```bash
 streamlit run app.py
 ```
-
-### Dashboard Features
-- **Interactive Maritime Map:** Pan, zoom, and toggle base layers (OpenStreetMap, Esri Satellite Imagery).
-- **Overlays:**
-  - Amber dashed bounding box representing the Sentinel-1 SAR acquisition footprint.
-  - Deep crimson polygon representing the deep-learning-segmented marine oil slick.
-  - Full AIS trajectory paths and individual pings color-coded by suspect ranking (Red = Rank 1, Orange = Rank 2, Gray = Ambient).
-- **Interactive Telemetry Popups:** Click on any ping to view MMSI, timestamp, speed, heading, and distance to the spill.
-- **Dynamic Investigation Controls:** Real-time sliders in the sidebar for candidate search radius (1–50 km) and spatial/temporal weights.
-- **Forensic Attribution Report:** Tabular breakdown of suspect rankings, confidence scores, and physical causality validation, complete with CSV export and vessel speed analytics.
+Open **[http://localhost:8501](http://localhost:8501)** in your browser.

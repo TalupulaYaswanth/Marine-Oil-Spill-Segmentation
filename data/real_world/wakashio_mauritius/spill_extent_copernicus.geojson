@@ -1,0 +1,62 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "classification": "Heavy Fuel Oil Surface Plume",
+        "satellite": "Sentinel-1A SAR",
+        "activation": "EMSR449",
+        "estimated_area_sqkm": 27.4,
+        "slick_thickness": "Continuous dark film (>0.1 mm)"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              57.749,
+              -20.4425
+            ],
+            [
+              57.745,
+              -20.435
+            ],
+            [
+              57.732,
+              -20.422
+            ],
+            [
+              57.718,
+              -20.41
+            ],
+            [
+              57.705,
+              -20.405
+            ],
+            [
+              57.692,
+              -20.415
+            ],
+            [
+              57.708,
+              -20.432
+            ],
+            [
+              57.726,
+              -20.445
+            ],
+            [
+              57.742,
+              -20.448
+            ],
+            [
+              57.749,
+              -20.4425
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

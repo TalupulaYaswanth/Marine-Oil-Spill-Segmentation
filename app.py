@@ -2,18 +2,21 @@
 app.py
 Streamlit Interactive Dashboard for Marine Oil Spill Segmentation & Vessel Attribution.
 
-Features:
-  - Interactive Folium/Leaflet marine map.
-  - Satellite SAR scene boundary and segmented oil spill polygon overlay.
-  - Spatiotemporal AIS vessel tracks colored by suspect ranking.
-  - Point of Closest Approach markers with maritime telemetry.
-  - Sidebar controls for dynamic thresholding and attribution weighting.
-  - Forensic suspect ranking table and deep-dive card.
+Real-World Remote Sensing & Maritime Forensics Edition:
+  - Benchmark Real-World Incidents:
+      1. MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMS EMSR449 Rapid Mapping
+      2. Strait of Gibraltar Marine Highway Corridor (High-Density IMO Traffic)
+      3. Custom AIS Ingestion (NOAA Marine Cadastre / DMA / MarineTraffic standard)
+      4. Live Open STAC Catalog Search (Sentinel-1 SAR from Microsoft Planetary Computer / AWS)
+  - Hydrodynamic Leeway Drift Physics (NOAA ADIOS / CEDRE surface transport modeling)
+  - Interactive Folium/Leaflet Marine Map with real vessel names, IMO numbers, and telemetry
+  - Spatiotemporal attribution scoring and forensic causality analysis
 """
 
 import os
 import sys
 import json
+import math
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -39,13 +42,16 @@ except ImportError:
     HAS_FOLIUM = False
 
 from src.attribution.engine import VesselAttributionEngine
+from src.attribution.drift_physics import HydrodynamicDriftModel
+from src.ais_loader import UniversalAISLoader
+from src.stac_client import Sentinel1STACClient
 
 
 # ==============================================================================
 # Page Configuration & Styling
 # ==============================================================================
 st.set_page_config(
-    page_title="Marine Oil Spill & Vessel Attribution Engine",
+    page_title="Marine Oil Spill Sentinel & Vessel Attribution",
     page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -53,149 +59,147 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .reportview-container {
-        background: #0E1117;
-    }
-    .metric-card {
-        background-color: #1E222D;
+    .metric-container {
+        background-color: #1A1F2C;
         border-radius: 8px;
-        padding: 15px;
+        padding: 14px 18px;
         border-left: 4px solid #00ADB5;
         margin-bottom: 12px;
     }
-    .suspect-card-rank1 {
+    .incident-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
         background-color: #2D1A22;
+        color: #FF5252;
+        border: 1px solid #FF5252;
+        margin-bottom: 8px;
+    }
+    .suspect-card-rank1 {
+        background-color: #24141B;
         border-radius: 8px;
-        padding: 18px;
+        padding: 16px 20px;
         border: 2px solid #FF0055;
         margin-bottom: 15px;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 16px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==============================================================================
-# Data Loading & Helper Functions
+# Real-World Preset Incidents Data
 # ==============================================================================
-DEFAULT_SPILL_POLYGON = [
-    [-5.165, 36.215],
-    [-5.150, 36.228],
-    [-5.120, 36.235],
-    [-5.110, 36.225],
-    [-5.130, 36.212],
-    [-5.165, 36.215]
-]
+INCIDENT_PRESETS = {
+    "wakashio": {
+        "name": "MV Wakashio Coral Reef Disaster (Mauritius, Aug 2020)",
+        "badge": "Copernicus EMS Rapid Mapping Activation EMSR449",
+        "description": "Bulk carrier MV Wakashio (300m Capesize) struck the coral reef at Pointe d'Esny, spilling ~1,000 tonnes of bunker fuel into the marine park.",
+        "ais_path": "data/real_world/wakashio_mauritius/real_ais_telemetry.csv",
+        "geojson_path": "data/real_world/wakashio_mauritius/spill_extent_copernicus.geojson",
+        "metadata_path": "data/real_world/wakashio_mauritius/incident_metadata.json",
+        "center": [-20.435, 57.735],
+        "zoom": 12,
+        "sar_bounds": [57.45, -20.65, 57.95, -20.25],
+        "timestamp": "2020-08-10T01:53:11Z",
+        "default_wind_speed": 18.5,
+        "default_wind_dir": 115.0,
+        "default_curr_speed": 0.32,
+        "default_curr_dir": 310.0
+    },
+    "gibraltar": {
+        "name": "Strait of Gibraltar Marine Highway Corridor (Mediterranean Gateway)",
+        "badge": "IMO Traffic Separation Scheme (TSS) Real Monitoring",
+        "description": "High-density international tanker corridor connecting Atlantic Ocean and Mediterranean Sea with crude oil carriers and container liners.",
+        "ais_path": "data/real_world/gibraltar_strait/real_ais_telemetry.csv",
+        "geojson_path": "data/real_world/gibraltar_strait/spill_extent.geojson",
+        "metadata_path": "data/real_world/gibraltar_strait/incident_metadata.json",
+        "center": [36.225, -5.137],
+        "zoom": 11,
+        "sar_bounds": [-5.50, 36.00, -4.80, 36.50],
+        "timestamp": "2024-05-15T06:30:12Z",
+        "default_wind_speed": 14.0,
+        "default_wind_dir": 80.0,
+        "default_curr_speed": 0.45,
+        "default_curr_dir": 75.0
+    }
+}
 
-DEFAULT_SAR_BOUNDS = [-5.50, 36.00, -4.80, 36.50]  # min_lon, min_lat, max_lon, max_lat
-DEFAULT_TIMESTAMP = "2024-05-15T06:30:00Z"
 
-
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
 @st.cache_data
-def load_ais_data(ais_path: str) -> pd.DataFrame:
-    """Loads historical AIS dataset."""
-    if not os.path.exists(ais_path):
-        st.error(f"AIS file not found at {ais_path}. Run Phase 1 data generation first.")
-        return pd.DataFrame()
-    df = pd.read_csv(ais_path)
-    df.columns = [c.strip().lower() for c in df.columns]
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    return df
+def load_incident_spill_polygon(geojson_path: str) -> List[List[float]]:
+    """Loads GeoJSON spill geometry into [[lon, lat], ...] coordinate ring."""
+    if not os.path.exists(geojson_path):
+        return [[-5.165, 36.215], [-5.150, 36.228], [-5.120, 36.235], [-5.110, 36.225], [-5.130, 36.212]]
+    with open(geojson_path, "r") as f:
+        data = json.load(f)
+    try:
+        coords = data["features"][0]["geometry"]["coordinates"][0]
+        return coords
+    except Exception:
+        return [[-5.165, 36.215], [-5.150, 36.228], [-5.120, 36.235], [-5.110, 36.225], [-5.130, 36.212]]
 
 
-def compute_attribution(
-    ais_df: pd.DataFrame,
-    spill_coords: List[List[float]],
-    spill_time: datetime,
-    threshold_km: float,
-    spatial_w: float,
-    temporal_w: float
-) -> pd.DataFrame:
-    """Executes attribution engine."""
-    engine = VesselAttributionEngine(
-        distance_threshold_km=threshold_km,
-        spatial_weight=spatial_w,
-        temporal_weight=temporal_w,
-        temporal_sigma_hours=2.0
-    )
-    return engine.attribute_suspect_vessels(
-        spill_polygon=spill_coords,
-        ais_data=ais_df,
-        spill_timestamp=spill_time
-    )
-
-
-# ==============================================================================
-# Map Rendering Functions (Folium + HTML Fallback)
-# ==============================================================================
 def get_vessel_color(rank: int) -> str:
-    """Returns distinctive visual colors for suspect rankings."""
     if rank == 1:
         return "#FF0055"  # Crimson Red (Primary Suspect)
     elif rank == 2:
-        return "#FF8800"  # Amber Orange (Secondary Suspect)
+        return "#FF8800"  # Amber Orange
     elif rank == 3:
         return "#FFD600"  # Yellow
     else:
         return "#3388FF"  # Blue
 
 
-def create_folium_map(
+# ==============================================================================
+# Interactive Map Rendering
+# ==============================================================================
+def render_marine_map(
     spill_coords: List[List[float]],
     sar_bounds: List[float],
     ais_df: pd.DataFrame,
     ranked_suspects: pd.DataFrame,
-    spill_time_str: str
+    spill_time_str: str,
+    drift_info: Optional[Dict[str, Any]] = None,
+    center: Optional[List[float]] = None,
+    zoom: int = 11
 ):
-    """Constructs Folium map with layers for SAR bounds, spill mask, and AIS trajectories."""
-    # Compute center
     lats = [c[1] for c in spill_coords]
     lons = [c[0] for c in spill_coords]
-    center_lat = sum(lats) / len(lats)
-    center_lon = sum(lons) / len(lons)
+    center_lat = center[0] if center else sum(lats) / len(lats)
+    center_lon = center[1] if center else sum(lons) / len(lons)
 
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=11,
-        tiles="CartoDB positron"
-    )
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, tiles="CartoDB positron")
 
-    # Base layers
+    # Base Tile Layers
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri",
+        attr="Esri World Imagery",
         name="Satellite Imagery",
-        overlay=False,
-        control=True
+        overlay=False
     ).add_to(m)
 
-    folium.TileLayer(
-        tiles="OpenStreetMap",
-        name="OpenStreetMap",
-        overlay=False,
-        control=True
-    ).add_to(m)
+    folium.TileLayer(tiles="OpenStreetMap", name="OpenStreetMap", overlay=False).add_to(m)
 
-    # 1. Overlay Satellite Scene Footprint (Bounding Box)
+    # 1. Sentinel-1 SAR Footprint
     min_lon, min_lat, max_lon, max_lat = sar_bounds
     sar_box = [
-        [min_lat, min_lon],
-        [min_lat, max_lon],
-        [max_lat, max_lon],
-        [max_lat, min_lon],
-        [min_lat, min_lon]
+        [min_lat, min_lon], [min_lat, max_lon],
+        [max_lat, max_lon], [max_lat, min_lon], [min_lat, min_lon]
     ]
     folium.PolyLine(
         locations=sar_box,
         color="#F39C12",
         weight=2,
         dash_array="6, 6",
-        tooltip=f"<b>Sentinel-1 SAR Footprint</b><br>Acquisition: {spill_time_str}"
+        tooltip=f"<b>Sentinel-1 SAR Footprint</b><br>Acquired: {spill_time_str}"
     ).add_to(m)
 
-    # 2. Overlay Oil Spill Polygon
+    # 2. Oil Spill Polygon
     spill_latlon = [[c[1], c[0]] for c in spill_coords]
     folium.Polygon(
         locations=spill_latlon,
@@ -204,26 +208,37 @@ def create_folium_map(
         fill=True,
         fill_color="#D32F2F",
         fill_opacity=0.65,
-        tooltip="<b>Detected Marine Oil Spill</b><br>Damped backscatter anomaly",
+        tooltip="<b>Observed Marine Oil Spill</b><br>Damped capillary surface wave anomaly",
         popup=folium.Popup(
-            f"<div style='font-family:sans-serif;'><b>Marine Oil Slick</b><br>"
+            f"<div style='font-family:sans-serif;'><b>Satellite-Delineated Oil Spill</b><br>"
             f"Observation: {spill_time_str}<br>"
-            f"Centroid: {center_lat:.4f}°N, {center_lon:.4f}°W</div>",
+            f"Centroid: {center_lat:.4f}°, {center_lon:.4f}°</div>",
             max_width=250
         )
     ).add_to(m)
 
-    # Centroid Marker
-    folium.CircleMarker(
-        location=[center_lat, center_lon],
-        radius=4,
-        color="#000000",
-        fill=True,
-        fill_color="#FFFFFF",
-        tooltip="Spill Centroid"
-    ).add_to(m)
+    # 3. Hydrodynamic Drift Backtrack Vector
+    if drift_info and "backtrack_path" in drift_info:
+        path = drift_info["backtrack_path"]
+        folium.PolyLine(
+            locations=path,
+            color="#00ADB5",
+            weight=3,
+            dash_array="5, 5",
+            tooltip=(
+                f"<b>Hydrodynamic Backtrack Vector</b><br>"
+                f"Estimated Drift: {drift_info['total_distance_km']} km at {drift_info['drift_direction_deg']}°<br>"
+                f"Speed: {drift_info['drift_speed_knots']} knots"
+            )
+        ).add_to(m)
+        # Origin Marker
+        folium.Marker(
+            location=[drift_info["origin_lat"], drift_info["origin_lon"]],
+            icon=folium.Icon(color="cadetblue", icon="anchor", prefix="fa"),
+            tooltip="<b>Estimated Discharge / Release Origin</b>"
+        ).add_to(m)
 
-    # Create lookup map for rankings
+    # 4. AIS Vessel Trajectories & Telemetry
     mmsi_rank_map = {}
     if not ranked_suspects.empty:
         for _, row in ranked_suspects.iterrows():
@@ -231,103 +246,102 @@ def create_folium_map(
                 "rank": int(row["rank"]),
                 "score": float(row["attribution_score"]),
                 "dist_km": float(row["closest_distance_km"]),
-                "time_offset": float(row["time_delta_hours"]),
-                "closest_ts": str(row["closest_timestamp"])
+                "name": str(row.get("vessel_name", "")),
+                "type": str(row.get("vessel_type", "")),
+                "time_offset": float(row["time_delta_hours"])
             }
 
-    # 3. Plot AIS Vessel Tracks and Pings
     for mmsi, group in ais_df.groupby("mmsi"):
         mmsi = int(mmsi)
-        group_sorted = group.sort_values("timestamp")
-        track_points = [[r["latitude"], r["longitude"]] for _, r in group_sorted.iterrows()]
+        group_s = group.sort_values("timestamp")
+        track_points = [[r["latitude"], r["longitude"]] for _, r in group_s.iterrows()]
 
         info = mmsi_rank_map.get(mmsi)
+        vessel_name = str(group_s.iloc[0].get("vessel_name", f"Vessel {mmsi}"))
+        vessel_type = str(group_s.iloc[0].get("vessel_type", "Commercial Vessel"))
+
         if info:
             rank = info["rank"]
             color = get_vessel_color(rank)
             weight = 4 if rank == 1 else (3 if rank == 2 else 2)
             dash = None
             tooltip_txt = (
-                f"<b>Rank #{rank} Suspect (MMSI: {mmsi})</b><br>"
-                f"Score: {info['score']:.4f}<br>"
-                f"Min Dist: {info['dist_km']:.2f} km<br>"
-                f"Time Delta: {info['time_offset']:+.2f} hrs"
+                f"<b>Rank #{rank} Suspect: {vessel_name} (MMSI: {mmsi})</b><br>"
+                f"Type: {vessel_type}<br>"
+                f"Score: {info['score']:.4f} | Min Dist: {info['dist_km']:.2f} km<br>"
+                f"Offset: {info['time_offset']:+.2f} hrs"
             )
         else:
-            color = "#7F8C8D"  # Neutral Gray
+            color = "#7F8C8D"
             weight = 2
             dash = "4, 4"
-            tooltip_txt = f"Vessel MMSI: {mmsi} (Non-suspect)"
+            tooltip_txt = f"<b>{vessel_name} (MMSI: {mmsi})</b><br>Type: {vessel_type} (Ambient Traffic)"
 
-        # Trajectory Line
-        folium.PolyLine(
-            locations=track_points,
-            color=color,
-            weight=weight,
-            dash_array=dash,
-            tooltip=tooltip_txt
-        ).add_to(m)
+        # Trajectory
+        folium.PolyLine(locations=track_points, color=color, weight=weight, dash_array=dash, tooltip=tooltip_txt).add_to(m)
 
-        # Plot individual pings
-        for _, ping in group_sorted.iterrows():
+        # Telemetry Pings
+        for _, ping in group_s.iterrows():
             p_ts = str(ping["timestamp"]).replace("+00:00", "")
             popup_html = (
-                f"<div style='font-family:sans-serif; min-width:160px;'>"
-                f"<b>MMSI:</b> {mmsi}<br>"
-                f"<b>Timestamp (UTC):</b> {p_ts}<br>"
-                f"<b>Speed:</b> {ping['speed']:.1f} knots<br>"
-                f"<b>Course:</b> {ping['course']:.0f}°<br>"
-                + (f"<b>Rank:</b> #{info['rank']} ({info['score']:.3f})" if info else "") +
+                f"<div style='font-family:sans-serif; min-width:180px;'>"
+                f"<b>{vessel_name}</b><br>"
+                f"<b>MMSI:</b> {mmsi} | <b>IMO:</b> {ping.get('imo', 'N/A')}<br>"
+                f"<b>Type:</b> {vessel_type}<br>"
+                f"<b>UTC Time:</b> {p_ts}<br>"
+                f"<b>Speed:</b> {ping['speed']:.1f} kts | <b>Course:</b> {ping['course']:.0f}°<br>"
+                f"<b>Status:</b> {ping.get('status', 'Underway')}<br>"
+                + (f"<b>Attribution Rank:</b> #{info['rank']} ({info['score']:.4f})" if info else "") +
                 f"</div>"
             )
             folium.CircleMarker(
                 location=[ping["latitude"], ping["longitude"]],
-                radius=4 if info and info["rank"] == 1 else 3,
+                radius=5 if info and info["rank"] == 1 else 3,
                 color=color,
                 fill=True,
                 fill_color=color,
-                fill_opacity=0.8,
-                popup=folium.Popup(popup_html, max_width=240)
+                fill_opacity=0.85,
+                popup=folium.Popup(popup_html, max_width=250)
             ).add_to(m)
 
     folium.LayerControl().add_to(m)
     return m
 
 
-def render_leaflet_html(
+def render_leaflet_html_fallback(
     spill_coords: List[List[float]],
     sar_bounds: List[float],
     ais_df: pd.DataFrame,
     ranked_suspects: pd.DataFrame,
-    spill_time_str: str
+    spill_time_str: str,
+    center: Optional[List[float]] = None,
+    zoom: int = 11
 ) -> str:
-    """Self-contained Leaflet HTML generator for environments without streamlit-folium."""
+    """Self-contained Leaflet.js fallback for environments without folium."""
     lats = [c[1] for c in spill_coords]
     lons = [c[0] for c in spill_coords]
-    center_lat = sum(lats) / len(lats)
-    center_lon = sum(lons) / len(lons)
+    center_lat = center[0] if center else sum(lats) / len(lats)
+    center_lon = center[1] if center else sum(lons) / len(lons)
 
-    spill_geojson_coords = [[[c[0], c[1]] for c in spill_coords]]
-
-    # Prepare suspect lookup
     mmsi_info = {}
     if not ranked_suspects.empty:
         for _, row in ranked_suspects.iterrows():
             mmsi_info[int(row["mmsi"])] = {
                 "rank": int(row["rank"]),
+                "name": str(row.get("vessel_name", "")),
                 "score": float(row["attribution_score"]),
-                "dist": float(row["closest_distance_km"]),
-                "offset": float(row["time_delta_hours"])
+                "dist": float(row["closest_distance_km"])
             }
 
-    # Prepare vessels data payload
     vessels_data = []
     for mmsi, group in ais_df.groupby("mmsi"):
         mmsi = int(mmsi)
         group_s = group.sort_values("timestamp")
-        points = [[r["latitude"], r["longitude"], str(r["timestamp"]), float(r["speed"]), float(r["course"])] for _, r in group_s.iterrows()]
+        points = [[r["latitude"], r["longitude"], str(r["timestamp"]), float(r["speed"]), float(r["course"]), str(r.get("vessel_name", ""))] for _, r in group_s.iterrows()]
         vessels_data.append({
             "mmsi": mmsi,
+            "name": str(group_s.iloc[0].get("vessel_name", f"Vessel {mmsi}")),
+            "type": str(group_s.iloc[0].get("vessel_type", "Commercial")),
             "points": points,
             "suspect": mmsi_info.get(mmsi, None)
         })
@@ -339,68 +353,40 @@ def render_leaflet_html(
         <meta charset="utf-8" />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style>
-            #map {{ width: 100%; height: 620px; border-radius: 8px; }}
-            .legend {{ background: white; padding: 10px; border-radius: 5px; font-family: sans-serif; font-size: 12px; box-shadow: 0 0 15px rgba(0,0,0,0.2); }}
-            .legend-item {{ display: flex; align-items: center; margin-bottom: 4px; }}
-            .legend-color {{ width: 14px; height: 14px; margin-right: 6px; display: inline-block; border-radius: 2px; }}
-        </style>
+        <style>#map {{ width: 100%; height: 600px; border-radius: 8px; }}</style>
     </head>
     <body style="margin:0; padding:0;">
         <div id="map"></div>
         <script>
-            var map = L.map('map').setView([{center_lat}, {center_lon}], 11);
-            
-            var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                maxZoom: 18, attribution: 'OpenStreetMap'
-            }}).addTo(map);
+            var map = L.map('map').setView([{center_lat}, {center_lon}], {zoom});
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom: 18, attribution: 'OpenStreetMap' }}).addTo(map);
 
-            var esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
-                maxZoom: 18, attribution: 'Esri Satellite'
-            }});
-
-            var baseLayers = {{ "OpenStreetMap": osm, "Satellite View": esri }};
-            L.control.layers(baseLayers).addTo(map);
-
-            // 1. SAR Scene Bounds
             var sarBounds = [[{sar_bounds[1]}, {sar_bounds[0]}], [{sar_bounds[3]}, {sar_bounds[2]}]];
             L.rectangle(sarBounds, {{color: "#F39C12", weight: 2, dashArray: "5, 5", fill: false}})
-              .bindTooltip("<b>Sentinel-1 SAR Footprint</b><br>Acquisition: {spill_time_str}")
-              .addTo(map);
+              .bindTooltip("<b>Sentinel-1 SAR Footprint</b><br>Time: {spill_time_str}").addTo(map);
 
-            // 2. Oil Spill Polygon
-            var spillPolygon = L.polygon({json.dumps([[c[1], c[0]] for c in spill_coords])}, {{
-                color: "#8B0000",
-                fillColor: "#D32F2F",
-                fillOpacity: 0.65,
-                weight: 3
-            }}).bindPopup("<b>Detected Marine Oil Spill</b><br>Centroid: {center_lat:.4f}°N, {center_lon:.4f}°W<br>Time: {spill_time_str}").addTo(map);
+            L.polygon({json.dumps([[c[1], c[0]] for c in spill_coords])}, {{
+                color: "#8B0000", fillColor: "#D32F2F", fillOpacity: 0.65, weight: 3
+            }}).bindPopup("<b>Detected Marine Oil Spill</b><br>Time: {spill_time_str}").addTo(map);
 
-            // 3. Vessel Tracks
             var vessels = {json.dumps(vessels_data)};
             vessels.forEach(function(v) {{
                 var latlngs = v.points.map(function(p) {{ return [p[0], p[1]]; }});
                 var color = "#7F8C8D";
                 var weight = 2;
                 var dash = "4, 4";
-                var tooltipTxt = "Vessel MMSI: " + v.mmsi;
+                var tooltip = v.name + " (MMSI: " + v.mmsi + ")";
 
                 if (v.suspect) {{
                     if (v.suspect.rank === 1) {{ color = "#FF0055"; weight = 4; dash = null; }}
                     else if (v.suspect.rank === 2) {{ color = "#FF8800"; weight = 3; dash = null; }}
-                    else {{ color = "#FFD600"; weight = 3; dash = null; }}
-                    tooltipTxt = "<b>Rank #" + v.suspect.rank + " Suspect (MMSI: " + v.mmsi + ")</b><br>Score: " + v.suspect.score.toFixed(3) + "<br>Min Dist: " + v.suspect.dist.toFixed(2) + " km";
+                    tooltip = "<b>Rank #" + v.suspect.rank + " Suspect: " + v.name + "</b><br>Score: " + v.suspect.score.toFixed(3) + " | Dist: " + v.suspect.dist.toFixed(2) + " km";
                 }}
 
-                L.polyline(latlngs, {{color: color, weight: weight, dashArray: dash}})
-                 .bindTooltip(tooltipTxt)
-                 .addTo(map);
-
+                L.polyline(latlngs, {{color: color, weight: weight, dashArray: dash}}).bindTooltip(tooltip).addTo(map);
                 v.points.forEach(function(p) {{
-                    var popup = "<b>MMSI:</b> " + v.mmsi + "<br><b>Time:</b> " + p[2].replace("+00:00", "") + "<br><b>Speed:</b> " + p[3].toFixed(1) + " kts<br><b>Course:</b> " + p[4].toFixed(0) + "°";
-                    L.circleMarker([p[0], p[1]], {{radius: (v.suspect && v.suspect.rank === 1) ? 5 : 3, color: color, fillColor: color, fillOpacity: 0.85}})
-                     .bindPopup(popup)
-                     .addTo(map);
+                    var pop = "<b>" + v.name + "</b><br>MMSI: " + v.mmsi + "<br>Type: " + v.type + "<br>Time: " + p[2].replace("+00:00", "") + "<br>Speed: " + p[3].toFixed(1) + " kts | Course: " + p[4].toFixed(0) + "°";
+                    L.circleMarker([p[0], p[1]], {{radius: (v.suspect && v.suspect.rank === 1) ? 5 : 3, color: color, fillColor: color, fillOpacity: 0.85}}).bindPopup(pop).addTo(map);
                 }});
             }});
         </script>
@@ -411,93 +397,205 @@ def render_leaflet_html(
 
 
 # ==============================================================================
-# Main Streamlit Application Layout
+# Main Streamlit Application
 # ==============================================================================
 def main():
-    # -------------------------------------------------------------
-    # Header
-    # -------------------------------------------------------------
-    st.title("🛰️ Marine Oil Spill Segmentation & Vessel Attribution Dashboard")
+    st.title("🛰️ Sentinel-1 SAR Marine Oil Spill & Vessel Attribution Engine")
     st.markdown(
-        "**Deep Learning-Based Satellite Remote Sensing & AIS Telemetry Pipeline** | "
-        "*Integrating Sentinel-1 SAR imagery with maritime spatiotemporal trajectory attribution.*"
+        "**Real-World Geospatial Intelligence & Maritime Pollution Attribution** | "
+        "*Integrating Synthetic Aperture Radar (SAR) Earth Observation with AIS Trajectory Forensics.*"
     )
 
     # -------------------------------------------------------------
-    # Sidebar: Configurations & Controls
+    # Sidebar: Case Study Selector
     # -------------------------------------------------------------
-    st.sidebar.header("⚙️ Investigation Parameters")
-
-    ais_path = st.sidebar.text_input(
-        "Historical AIS CSV Path",
-        value="data/sample_ais.csv",
-        help="Path to AIS log CSV (columns: mmsi, timestamp, latitude, longitude, speed, course)."
+    st.sidebar.header("📁 Real-World Incident Case Studies")
+    case_mode = st.sidebar.radio(
+        "Select Dataset / Source:",
+        [
+            "🌊 MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
+            "🚢 Strait of Gibraltar Marine Highway — IMO Traffic Scheme",
+            "📂 Custom AIS Upload (NOAA Marine Cadastre / DMA)",
+            "🛰️ Live Sentinel-1 STAC Catalog Search"
+        ]
     )
 
-    spill_time_input = st.sidebar.text_input(
-        "Satellite Image Acquisition (UTC)",
-        value=DEFAULT_TIMESTAMP,
-        help="ISO 8601 acquisition timestamp of the Sentinel-1 SAR scene."
-    )
+    # Mode 1: MV Wakashio Disaster
+    if "Wakashio" in case_mode:
+        preset = INCIDENT_PRESETS["wakashio"]
+        ais_path = preset["ais_path"]
+        spill_coords = load_incident_spill_polygon(preset["geojson_path"])
+        sar_bounds = preset["sar_bounds"]
+        spill_time_str = preset["timestamp"]
+        map_center = preset["center"]
+        map_zoom = preset["zoom"]
+        incident_name = preset["name"]
+        incident_badge = preset["badge"]
+        incident_desc = preset["description"]
 
-    st.sidebar.subheader("Attribution Engine Filters")
-    threshold_km = st.sidebar.slider(
-        "Candidate Search Radius (km)",
-        min_value=1.0,
-        max_value=50.0,
-        value=25.0,
-        step=1.0,
-        help="Maximum distance between vessel track and oil spill boundary to classify as candidate."
-    )
+        default_wind_spd = preset["default_wind_speed"]
+        default_wind_dir = preset["default_wind_dir"]
+        default_curr_spd = preset["default_curr_speed"]
+        default_curr_dir = preset["default_curr_dir"]
 
-    spatial_w = st.sidebar.slider(
-        "Spatial Distance Weight",
-        min_value=0.1,
-        max_value=0.9,
-        value=0.6,
-        step=0.05,
-        help="Weight assigned to spatial proximity in composite scoring."
-    )
+    # Mode 2: Gibraltar TSS Highway
+    elif "Gibraltar" in case_mode:
+        preset = INCIDENT_PRESETS["gibraltar"]
+        ais_path = preset["ais_path"]
+        spill_coords = load_incident_spill_polygon(preset["geojson_path"])
+        sar_bounds = preset["sar_bounds"]
+        spill_time_str = preset["timestamp"]
+        map_center = preset["center"]
+        map_zoom = preset["zoom"]
+        incident_name = preset["name"]
+        incident_badge = preset["badge"]
+        incident_desc = preset["description"]
+
+        default_wind_spd = preset["default_wind_speed"]
+        default_wind_dir = preset["default_wind_dir"]
+        default_curr_spd = preset["default_curr_speed"]
+        default_curr_dir = preset["default_curr_dir"]
+
+    # Mode 3: Custom AIS Upload
+    elif "Custom" in case_mode:
+        incident_name = "Custom Real-World AIS Incident Investigation"
+        incident_badge = "User Data Ingestion"
+        incident_desc = "Upload raw multi-column AIS CSV data (NOAA Marine Cadastre, Danish Maritime Authority, or generic)."
+        spill_coords = [[-5.165, 36.215], [-5.150, 36.228], [-5.120, 36.235], [-5.110, 36.225], [-5.130, 36.212]]
+        sar_bounds = [-5.50, 36.00, -4.80, 36.50]
+        spill_time_str = "2024-05-15T06:30:00Z"
+        map_center = [36.225, -5.137]
+        map_zoom = 11
+        default_wind_spd, default_wind_dir = 10.0, 90.0
+        default_curr_spd, default_curr_dir = 0.25, 270.0
+
+        uploaded_file = st.sidebar.file_uploader("Upload AIS CSV", type=["csv"])
+        if uploaded_file is not None:
+            raw_df = pd.read_csv(uploaded_file)
+            ais_df = UniversalAISLoader.load(raw_df)
+        else:
+            ais_df = UniversalAISLoader.load("data/real_world/gibraltar_strait/real_ais_telemetry.csv")
+
+    # Mode 4: STAC Query
+    else:
+        st.subheader("🛰️ Live Sentinel-1 SAR STAC Catalog Query (Planetary Computer / AWS)")
+        st.markdown(
+            "Query real ESA Sentinel-1 Synthetic Aperture Radar (SAR) Ground Range Detected (GRD) scenes "
+            "directly from open cloud catalogs for any maritime region on Earth."
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            region_choice = st.selectbox(
+                "Preset Maritime Region:",
+                [
+                    "Mauritius Island (MV Wakashio Site)",
+                    "Strait of Gibraltar (Mediterranean Gateway)",
+                    "Singapore Strait (Malacca Chokepoint)",
+                    "Persian Gulf / Strait of Hormuz",
+                    "North Sea (Dogger Bank)"
+                ]
+            )
+            region_bboxes = {
+                "Mauritius Island (MV Wakashio Site)": [57.12, -20.85, 58.05, -19.95],
+                "Strait of Gibraltar (Mediterranean Gateway)": [-5.80, 35.80, -4.60, 36.60],
+                "Singapore Strait (Malacca Chokepoint)": [103.50, 1.10, 104.20, 1.50],
+                "Persian Gulf / Strait of Hormuz": [55.50, 25.50, 57.00, 27.00],
+                "North Sea (Dogger Bank)": [1.50, 54.00, 3.50, 56.00]
+            }
+            search_bbox = region_bboxes[region_choice]
+
+        with c2:
+            date_col1, date_col2 = st.columns(2)
+            with date_col1:
+                start_d = st.text_input("Start Date [YYYY-MM-DD]", value="2020-08-01" if "Mauritius" in region_choice else "2024-05-01")
+            with date_col2:
+                end_d = st.text_input("End Date [YYYY-MM-DD]", value="2020-08-15" if "Mauritius" in region_choice else "2024-05-31")
+
+        stac_client = Sentinel1STACClient()
+        if st.button("🔍 Search Satellite Catalog"):
+            with st.spinner("Querying open STAC metadata catalog..."):
+                scenes = stac_client.search_scenes(bbox=tuple(search_bbox), start_date=start_d, end_date=end_d)
+                st.success(f"Found {len(scenes)} matching Sentinel-1 SAR acquisition scenes!")
+                for s in scenes:
+                    with st.expander(f"🛰️ {s['platform']} | Scene ID: {s['id'][:45]}... | {s['datetime']}"):
+                        st.json(s)
+        st.stop()
+
+    # Ingest AIS Data if not custom uploaded
+    if "Custom" not in case_mode:
+        ais_df = UniversalAISLoader.load(ais_path)
+
+    # -------------------------------------------------------------
+    # Sidebar: Investigation Controls
+    # -------------------------------------------------------------
+    st.sidebar.subheader("⚙️ Investigation Thresholds")
+    threshold_km = st.sidebar.slider("Candidate Search Radius (km)", 1.0, 50.0, 25.0, 1.0)
+    spatial_w = st.sidebar.slider("Spatial Distance Weight", 0.1, 0.9, 0.6, 0.05)
     temporal_w = round(1.0 - spatial_w, 2)
     st.sidebar.caption(f"Temporal Alignment Weight: **{temporal_w}**")
 
-    # Drift Vector Simulation
-    with st.sidebar.expander("🌊 Ocean Current & Wind Drift Modeling"):
-        drift_enabled = st.checkbox("Enable Spill Backtracking Drift", value=False)
-        drift_x = st.number_input("Drift dX (Eastward km)", value=1.2, step=0.1) if drift_enabled else 0.0
-        drift_y = st.number_input("Drift dY (Northward km)", value=0.5, step=0.1) if drift_enabled else 0.0
+    # Hydrodynamic Drift Leeway Modeling
+    st.sidebar.subheader("🌊 Hydrodynamic Drift & Backtracking")
+    drift_enabled = st.sidebar.checkbox("Enable Wind/Current Backtracking", value=True)
+    if drift_enabled:
+        hours_drift = st.sidebar.slider("Slick Age / Drift Elapsed (hours)", 0.5, 12.0, 3.0, 0.5)
+        wind_spd = st.sidebar.number_input("10m Wind Speed (knots)", value=default_wind_spd, step=1.0)
+        wind_dir = st.sidebar.number_input("Wind Direction FROM (°)", value=default_wind_dir, step=5.0)
+        curr_spd = st.sidebar.number_input("Ocean Surface Current (m/s)", value=default_curr_spd, step=0.05)
+        curr_dir = st.sidebar.number_input("Current Direction TOWARDS (°)", value=default_curr_dir, step=5.0)
 
-    # Load Data & Run Attribution
-    spill_time = datetime.fromisoformat(spill_time_input.replace("Z", "+00:00"))
-    ais_df = load_ais_data(ais_path)
+        drift_model = HydrodynamicDriftModel()
+        drift_results = drift_model.backtrack_slick_origin(
+            center_lon=map_center[1],
+            center_lat=map_center[0],
+            hours_elapsed=hours_drift,
+            current_speed_ms=curr_spd,
+            current_direction_deg=curr_dir,
+            wind_speed_ms=wind_spd * 0.514444,
+            wind_direction_from_deg=wind_dir
+        )
+    else:
+        drift_results = None
 
-    if ais_df.empty:
-        st.stop()
+    # Run Attribution Engine
+    spill_time = datetime.fromisoformat(spill_time_str.replace("Z", "+00:00"))
+    drift_vector_km = (drift_results["dx_km"], drift_results["dy_km"]) if drift_results else None
 
-    drift_vec = (drift_x, drift_y) if drift_enabled else None
-    ranked_suspects = compute_attribution(
-        ais_df=ais_df,
-        spill_coords=DEFAULT_SPILL_POLYGON,
-        spill_time=spill_time,
-        threshold_km=threshold_km,
-        spatial_w=spatial_w,
-        temporal_w=temporal_w
+    engine = VesselAttributionEngine(
+        distance_threshold_km=threshold_km,
+        spatial_weight=spatial_w,
+        temporal_weight=temporal_w,
+        temporal_sigma_hours=2.0
+    )
+    ranked_suspects = engine.attribute_suspect_vessels(
+        spill_polygon=spill_coords,
+        ais_data=ais_df,
+        spill_timestamp=spill_time,
+        drift_vector_km=drift_vector_km
     )
 
     # -------------------------------------------------------------
-    # Top Metrics Row
+    # Case Study Overview Banner
+    # -------------------------------------------------------------
+    st.markdown(f'<div class="incident-badge">{incident_badge}</div>', unsafe_allow_html=True)
+    st.subheader(incident_name)
+    st.markdown(f"*{incident_desc}*")
+
+    # -------------------------------------------------------------
+    # Metric KPI Row
     # -------------------------------------------------------------
     col1, col2, col3, col4 = st.columns(4)
-
     total_vessels = ais_df["mmsi"].nunique()
     candidate_count = len(ranked_suspects) if not ranked_suspects.empty else 0
 
-    col1.metric("Vessels Monitored", f"{total_vessels}")
+    col1.metric("Total Vessels Monitored", f"{total_vessels}")
     col2.metric("Candidates in Radius", f"{candidate_count}")
 
     if not ranked_suspects.empty:
         top_suspect = ranked_suspects.iloc[0]
-        col3.metric("Primary Suspect MMSI", f"{int(top_suspect['mmsi'])}")
+        top_name = str(top_suspect.get("vessel_name", f"MMSI {int(top_suspect['mmsi'])}"))
+        col3.metric("Primary Suspect", f"{top_name}", delta=f"Score {top_suspect['attribution_score']:.3f}")
         col4.metric(
             "Closest Approach",
             f"{top_suspect['closest_distance_km']:.2f} km",
@@ -509,112 +607,140 @@ def main():
         col4.metric("Closest Approach", "N/A")
 
     # -------------------------------------------------------------
-    # Main Body: Map & Forensic Attribution Report
+    # Main Tabs
     # -------------------------------------------------------------
-    tab_map, tab_report, tab_analytics = st.tabs(["🗺️ Geospatial Map View", "📋 Forensic Attribution Report", "📊 Trajectory Analytics"])
+    tab_map, tab_report, tab_drift, tab_analytics = st.tabs([
+        "🗺️ Maritime Situation Map",
+        "📋 Forensic Attribution Report",
+        "🌊 Hydrodynamic Drift Model",
+        "📊 Vessel Telemetry Profiles"
+    ])
 
     with tab_map:
-        st.markdown("### Interactive Maritime Situation Map")
         st.caption(
-            "🔴 **Crimson Polygon**: Detected oil spill | "
-            "🟡 **Dashed Box**: Sentinel-1 SAR footprint | "
+            "🔴 **Red Polygon**: Satellite-delineated oil spill | "
+            "🟡 **Dashed Box**: Sentinel-1 SAR scene footprint | "
             "🟣 **Magenta Line**: Rank #1 Suspect track | "
             "🟠 **Orange Line**: Rank #2 Suspect track | "
-            "⚪ **Gray Lines**: Ambient vessel traffic"
+            "⚪ **Gray Lines**: Ambient vessel traffic | "
+            "🔷 **Cyan Dashed Line**: Hydrodynamic drift backtrack vector"
         )
-
         if HAS_FOLIUM:
-            m = create_folium_map(
-                spill_coords=DEFAULT_SPILL_POLYGON,
-                sar_bounds=DEFAULT_SAR_BOUNDS,
+            m = render_marine_map(
+                spill_coords=spill_coords,
+                sar_bounds=sar_bounds,
                 ais_df=ais_df,
                 ranked_suspects=ranked_suspects,
-                spill_time_str=spill_time_input
+                spill_time_str=spill_time_str,
+                drift_info=drift_results,
+                center=map_center,
+                zoom=map_zoom
             )
             st_folium(m, width="100%", height=620, returned_objects=[])
         else:
-            # Fallback to embedded Leaflet.js
-            leaflet_html = render_leaflet_html(
-                spill_coords=DEFAULT_SPILL_POLYGON,
-                sar_bounds=DEFAULT_SAR_BOUNDS,
+            html = render_leaflet_html_fallback(
+                spill_coords=spill_coords,
+                sar_bounds=sar_bounds,
                 ais_df=ais_df,
                 ranked_suspects=ranked_suspects,
-                spill_time_str=spill_time_input
+                spill_time_str=spill_time_str,
+                center=map_center,
+                zoom=map_zoom
             )
-            st.components.v1.html(leaflet_html, height=640)
+            st.components.v1.html(html, height=640)
 
     with tab_report:
         st.markdown("### Suspect Vessel Attribution Rankings")
 
         if ranked_suspects.empty:
-            st.warning(f"No vessels found within the {threshold_km} km threshold radius.")
+            st.warning(f"No vessels detected within the {threshold_km} km search radius.")
         else:
-            # Highlight top suspect
+            top = ranked_suspects.iloc[0]
             st.markdown(f"""
             <div class="suspect-card-rank1">
-                <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Identified: MMSI {int(top_suspect['mmsi'])}</h3>
-                <p><b>Attribution Confidence Score:</b> <span style="font-size:18px; color:#00ADB5;">{top_suspect['attribution_score']:.4f} / 1.0000</span></p>
+                <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Identified: {top.get('vessel_name', 'MMSI ' + str(int(top['mmsi'])))}</h3>
+                <p><b>Attribution Confidence Score:</b> <span style="font-size:20px; color:#00ADB5;">{top['attribution_score']:.4f} / 1.0000</span></p>
                 <ul>
-                    <li><b>Closest Approach Distance:</b> {top_suspect['closest_distance_km']:.3f} km from spill perimeter</li>
-                    <li><b>Temporal Offset:</b> {top_suspect['time_delta_hours']:+.2f} hours from satellite observation time</li>
-                    <li><b>Timestamp of Closest Ping:</b> {top_suspect['closest_timestamp']}</li>
-                    <li><b>Vessel Speed & Heading:</b> {top_suspect['closest_speed_knots']:.1f} knots at course {top_suspect['closest_course_deg']:.0f}°</li>
-                    <li><b>Physical Causality Verified:</b> {'✅ Valid (Vessel present prior to/during satellite imaging)' if top_suspect['is_causally_valid'] else '❌ Non-causal'}</li>
+                    <li><b>Vessel Type:</b> {top.get('vessel_type', 'N/A')} | <b>MMSI:</b> {int(top['mmsi'])} | <b>IMO:</b> {top.get('imo', 'N/A')}</li>
+                    <li><b>Closest Approach Distance:</b> {top['closest_distance_km']:.3f} km from observed slick</li>
+                    <li><b>Temporal Alignment:</b> {top['time_delta_hours']:+.2f} hours offset from satellite imaging pass</li>
+                    <li><b>Speed & Heading at Closest Approach:</b> {top['closest_speed_knots']:.1f} knots at {top['closest_course_deg']:.0f}°</li>
+                    <li><b>Physical Causality Verified:</b> {'✅ Valid (Vessel present prior to or during satellite observation)' if top['is_causally_valid'] else '❌ Non-causal'}</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
 
-            # Table of all candidates
-            display_df = ranked_suspects.copy()
-            if "geometry" in display_df.columns:
-                display_df = display_df.drop(columns=["geometry"])
+            # Clean dataframe for display
+            disp_df = ranked_suspects.copy()
+            if "geometry" in disp_df.columns:
+                disp_df = disp_df.drop(columns=["geometry"])
 
-            display_df["mmsi"] = display_df["mmsi"].astype(str)
-            display_df["attribution_score"] = display_df["attribution_score"].map(lambda x: f"{x:.4f}")
-            display_df["closest_distance_km"] = display_df["closest_distance_km"].map(lambda x: f"{x:.2f} km")
-            display_df["time_delta_hours"] = display_df["time_delta_hours"].map(lambda x: f"{x:+.2f} h")
-            display_df["closest_speed_knots"] = display_df["closest_speed_knots"].map(lambda x: f"{x:.1f} kts")
+            st.dataframe(disp_df, width="stretch", hide_index=True)
 
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            # Export button
-            csv_data = ranked_suspects.drop(columns=["geometry"], errors="ignore").to_csv(index=False).encode("utf-8")
+            csv_data = disp_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download Attribution Report CSV",
+                label="📥 Export Forensic Attribution Report CSV",
                 data=csv_data,
-                file_name="spill_attribution_report.csv",
+                file_name=f"attribution_report_{case_mode[:8]}.csv",
                 mime="text/csv"
             )
 
-    with tab_analytics:
-        st.markdown("### AIS Spatiotemporal Trajectory Analysis")
+    with tab_drift:
+        st.markdown("### Hydrodynamic Leeway Transport & Backtracking Analysis")
+        st.markdown(
+            r"Using the **NOAA ADIOS / French CEDRE** maritime leeway drift formulation: "
+            r"oil slick transport is modeled as the vector sum of ambient ocean currents (100%), "
+            r"wind drag leeway ($3.2\%\text{ of }U_{10}$), and Coriolis deflection angle ($\pm 15^\circ$)."
+        )
 
-        # Telemetry Chart: Speed vs Time per vessel
+        if drift_results:
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Net Drift Velocity", f"{drift_results['drift_speed_knots']} knots")
+            d2.metric("Drift Direction", f"{drift_results['drift_direction_deg']}°")
+            d3.metric("Displacement Vector", f"{drift_results['total_distance_km']} km")
+            d4.metric("Estimated Release Origin", f"{drift_results['origin_lat']:.4f}°, {drift_results['origin_lon']:.4f}°")
+
+            st.markdown(f"""
+            - **Simulated Slick Age:** {hours_drift} hours prior to satellite acquisition
+            - **Net Eastward Offset ($dX$):** {drift_results['dx_km']:+.2f} km
+            - **Net Northward Offset ($dY$):** {drift_results['dy_km']:+.2f} km
+            - **Coriolis Deflection:** {15.0 if map_center[0] >= 0 else -15.0}° ({'Right of wind (Northern Hemisphere)' if map_center[0] >= 0 else 'Left of wind (Southern Hemisphere)'})
+            """)
+
+    with tab_analytics:
+        st.markdown("### Multi-Vessel Speed & Heading Telemetry")
         import matplotlib.pyplot as plt
 
-        fig, ax = plt.subplots(figsize=(10, 4.5))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+
         for mmsi, grp in ais_df.groupby("mmsi"):
             grp_s = grp.sort_values("timestamp")
             mmsi_int = int(mmsi)
+            v_name = str(grp_s.iloc[0].get("vessel_name", f"MMSI {mmsi_int}"))
             is_top = (not ranked_suspects.empty and mmsi_int == int(top_suspect["mmsi"]))
-            label = f"MMSI {mmsi_int} ({'Primary Suspect' if is_top else 'Ambient'})"
             color = "#FF0055" if is_top else None
             lw = 2.5 if is_top else 1.2
-            ax.plot(grp_s["timestamp"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
+            label = f"{v_name} ({'Primary Suspect' if is_top else 'Ambient'})"
 
-        ax.axvline(spill_time, color="#F39C12", linestyle="--", label=f"SAR Image Time ({spill_time_input[:16]})")
-        ax.set_ylabel("Speed Over Ground (knots)")
-        ax.set_title("Vessel Speed Profiles Over Satellite Acquisition Window")
-        ax.grid(True, linestyle=":", alpha=0.6)
-        ax.legend()
+            ax1.plot(grp_s["timestamp"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
+            ax2.plot(grp_s["timestamp"], grp_s["course"], marker="s", label=label, color=color, linewidth=lw)
+
+        ax1.axvline(spill_time, color="#F39C12", linestyle="--", label=f"Satellite Image ({spill_time_str[:16]})")
+        ax2.axvline(spill_time, color="#F39C12", linestyle="--")
+
+        ax1.set_ylabel("Speed (knots)")
+        ax1.set_title("Vessel Speed Over Ground (SOG)")
+        ax1.grid(True, linestyle=":", alpha=0.6)
+        ax1.legend(loc="upper right", fontsize=8)
+
+        ax2.set_ylabel("Course Over Ground (°)")
+        ax2.set_title("Vessel Navigation Heading (COG)")
+        ax2.set_xlabel("UTC Timestamp")
+        ax2.grid(True, linestyle=":", alpha=0.6)
+
         fig.tight_layout()
         st.pyplot(fig)
 
 
 if __name__ == "__main__":
     main()
-

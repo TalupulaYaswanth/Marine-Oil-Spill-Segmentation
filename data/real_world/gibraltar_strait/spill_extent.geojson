@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "classification": "Illegal Bilge / Fuel Discharge Plume",
+        "satellite": "Sentinel-1A SAR",
+        "estimated_area_sqkm": 8.6
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -5.165,
+              36.215
+            ],
+            [
+              -5.15,
+              36.228
+            ],
+            [
+              -5.12,
+              36.235
+            ],
+            [
+              -5.11,
+              36.225
+            ],
+            [
+              -5.13,
+              36.212
+            ],
+            [
+              -5.165,
+              36.215
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

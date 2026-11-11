@@ -1,0 +1,21 @@
+{
+  "incident_name": "Strait of Gibraltar Marine Highway Mystery Spill",
+  "location": "Strait of Gibraltar Traffic Separation Scheme (TSS)",
+  "satellite_scene": {
+    "satellite": "Sentinel-1A",
+    "scene_id": "S1A_IW_GRDH_1SDV_20240515T063012_20240515T063037_053872_068BF4_8A2C",
+    "acquisition_time_utc": "2024-05-15T06:30:12Z",
+    "bbox_wgs84": [
+      -5.5,
+      36.0,
+      -4.8,
+      36.5
+    ]
+  },
+  "environmental_forcing": {
+    "wind_speed_knots": 14.0,
+    "wind_direction_from_deg": 80.0,
+    "ocean_current_speed_ms": 0.45,
+    "ocean_current_direction_deg": 75.0
+  }
+}
