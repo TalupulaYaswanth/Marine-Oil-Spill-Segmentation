@@ -1,0 +1,25 @@
+# ==============================================================================
+# Render Infrastructure Blueprint (render.yaml)
+# Project: Marine Oil Spill Segmentation & Vessel Attribution Engine
+# ==============================================================================
+services:
+  - type: web
+    name: marine-oil-spill-sentinel
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MPLCONFIGDIR
+        value: /tmp/matplotlib_cache
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: "true"
+      - key: STREAMLIT_SERVER_ENABLE_CORS
+        value: "false"
+      - key: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
+        value: "false"

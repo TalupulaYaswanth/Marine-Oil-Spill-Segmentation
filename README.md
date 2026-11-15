@@ -130,31 +130,40 @@ python run_phase3.py
 
 ### 3. Launch Interactive Web Dashboard
 
-Launch the full-featured Streamlit console:
+Launch the full-featured Streamlit console locally:
 ```bash
 streamlit run app.py
 ```
 Open **[http://localhost:8501](http://localhost:8501)** in your browser.
 
-**Dashboard Features:**
-- **🚀 SOTA Production Pipeline Tab:** 1-click execution cockpit with side-by-side radar calibration and probability heatmaps, suspect vessel photo card, and 1-click artifact downloads.
-- **🗺️ Maritime Situation Map:** Interactive Folium/Leaflet layer switching between Esri World Satellite Imagery, SAR footprints, oil spill polygons, and colored vessel tracks.
-- **📋 Forensic Attribution Report:** Suspect rankings, CPA distance, time offset, and real ship photo resolution.
-- **🌊 Hydrodynamic Drift Model:** Live NOAA ADIOS leeway vectors and reverse backtrack origin point.
-- **📊 Vessel Telemetry Profiles:** Interactive Matplotlib speed (SOG) and heading (COG) time series.
-- **🛰️ STAC Satellite Catalog Search:** Direct queries to Microsoft Planetary Computer and AWS Earth Search for Sentinel-1 scenes worldwide.
+---
+
+### 4. ☁️ Deploy to Render (Cloud Hosting)
+
+Deploy the entire dashboard to **Render (render.com)** with one click:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/TalupulaYaswanth/Marine-Oil-Spill-Segmentation)
+
+- **Automated Blueprint:** Uses [`render.yaml`](render.yaml) to automatically configure build scripts, Python 3.11 environment, dynamic `$PORT` binding, and health checks.
+- **Docker Support:** Ready for containerized deployment with [`Dockerfile`](Dockerfile).
+- **Comprehensive Guide:** See [`docs/RENDER_DEPLOYMENT_GUIDE.md`](docs/RENDER_DEPLOYMENT_GUIDE.md) for full step-by-step instructions.
 
 ---
 
 ## 📂 Repository Structure
 
 ```
+├── .streamlit/
+│   └── config.toml                    # Streamlit server & dark theme configuration
 ├── configs/
 │   └── best_production_profile.yaml   # SkyTruth Cerulean & EMSA CleanSeaNet Profile
 ├── data/
 │   ├── sample_ais.csv                 # Benchmark multi-vessel AIS telemetry
 │   ├── S1A_IW_GRDH_...sample.tif      # Synthetic calibrated Sentinel-1 SAR scene
 │   └── real_world/                    # Real Copernicus EMS incidents (Wakashio & Gibraltar)
+├── docs/
+│   ├── TECHNICAL_REPORT.md            # Comprehensive research report & architecture
+│   └── RENDER_DEPLOYMENT_GUIDE.md     # Step-by-step cloud deployment manual
 ├── output/
 │   ├── phase1/                        # Preprocessed SAR rasters & filtered pings
 │   ├── phase3/                        # Attribution rankings CSV
@@ -168,6 +177,27 @@ Open **[http://localhost:8501](http://localhost:8501)** in your browser.
 │   ├── live_monitor.py                # Live NOAA emergency spills & radar feed
 │   ├── vessel_image_api.py            # MarineTraffic / VesselFinder photo resolver
 │   ├── segmentation/
+│   │   ├── inference.py               # Production Hybrid Segmenter (PyTorch + EMSA CFAR)
+│   │   ├── unet.py                    # PyTorch Single-Channel SAR U-Net
+│   │   ├── losses.py                  # BCEDiceLoss & IoU/F1 MetricTracker
+│   │   ├── dataset.py                 # PyTorch SAR Dataset with augmentations
+│   │   └── trainer.py                 # Checkpointing & validation loop
+│   └── attribution/
+│       ├── engine.py                  # Multi-criteria Bayesian attribution engine
+│       ├── drift_physics.py           # NOAA ADIOS-2 leeway drift & backtracking
+│       └── vectorizer.py              # Mask to Shapely Polygon georeferenced vectorizer
+├── app.py                             # Full-featured Streamlit interactive console
+├── build.sh                           # Render cloud build script
+├── Dockerfile                         # Production container definition
+├── Procfile                           # Web process definition for cloud hosts
+├── render.yaml                        # Render Infrastructure Blueprint (IaC)
+├── requirements.txt                   # Production Python dependencies
+├── run_production_pipeline.py         # Master production pipeline CLI
+├── run_phase1.py                      # Phase 1 runner
+├── train_segmentation.py              # Phase 2 runner
+├── run_phase3.py                      # Phase 3 runner
+└── test_system_integrity.py           # 16-point diagnostic test suite
+```
 │   │   ├── inference.py               # Production Hybrid Segmenter (PyTorch + EMSA CFAR)
 │   │   ├── unet.py                    # PyTorch Single-Channel SAR U-Net
 │   │   ├── losses.py                  # BCEDiceLoss & IoU/F1 MetricTracker
