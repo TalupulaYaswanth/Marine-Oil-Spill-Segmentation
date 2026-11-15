@@ -1,0 +1,105 @@
+# ==============================================================================
+# BEST PRODUCTION PROFILE: SkyTruth Cerulean & EMSA CleanSeaNet Gold Standard
+# Marine Oil Spill Semantic Segmentation & AIS Vessel Attribution System
+# ==============================================================================
+
+profile:
+  name: "SkyTruth Cerulean & EMSA CleanSeaNet SOTA Profile"
+  version: "2.4.0-production"
+  standard: "ESA Copernicus EMS EMSR449 / EMSA CleanSeaNet / NOAA ADIOS-2"
+  description: >
+    Production operational profile mirroring SkyTruth Cerulean's automated
+    satellite SAR oil spill detection and maritime vessel attribution pipeline.
+    Combines C-band SAR radiometric decibel calibration, U-Net semantic segmentation,
+    geospatial polygon vectorization, hydrodynamic leeway drift backtracking,
+    and multi-criteria AIS trajectory attribution forensics.
+
+satellite_sensor:
+  constellation: "Copernicus Sentinel-1"
+  platforms: ["SENTINEL-1A", "SENTINEL-1B"]
+  sensor_mode: "IW"  # Interferometric Wide Swath
+  product_type: "GRD" # Ground Range Detected High Resolution
+  polarizations: ["VV", "VH"]
+  pixel_spacing_m: 10.0
+  swath_width_km: 250.0
+  incidence_angle_range_deg: [29.1, 46.0]
+  repeat_cycle_days: 6.0
+
+sar_radiometric_preprocessing:
+  calibration_target: "sigma0_decibel"  # sigma^0 = 10 * log10(DN^2 / A^2 + epsilon)
+  epsilon_offset: 1.0e-7
+  speckle_filter:
+    algorithm: "enhanced_lee"
+    window_size: 5
+    damping_factor: 1.0
+  percentile_clipping:
+    min_percentile: 1.0
+    max_percentile: 99.0
+  dynamic_range_db:
+    sea_ambient_nominal_db: -12.0
+    oil_slick_damped_nominal_db: -22.0
+    damping_contrast_min_db: 4.5
+    range_min_db: -30.0
+    range_max_db: 0.0
+  normalization: "min_max_unit_interval" # Scales to [0.0, 1.0] for neural network
+
+segmentation_engine:
+  model_architecture: "SAR_UNet_5Stage"
+  backbone: "DoubleConv_Residual_Skip"
+  input_channels: 1  # VV Co-polarization (highest capillary surface wave sensitivity)
+  feature_channels: [32, 64, 128, 256, 512]
+  tile_size: [512, 512]
+  tile_stride_overlap_pixels: 128
+  loss_formulation: "BCEDiceLoss"
+  loss_weights:
+    bce_weight: 0.50
+    dice_weight: 0.50
+  detection_threshold: 0.50
+  min_slick_area_km2: 0.15  # Minimum contiguous area to eliminate low-wind / biogenic look-alikes
+  morphological_cleanup:
+    opening_radius_pixels: 2
+    closing_radius_pixels: 3
+    hole_filling: true
+
+hydrodynamic_drift:
+  governing_model: "NOAA_ADIOS2_CEDRE_Leeway"
+  physics_equation: "U_drift = 1.00 * U_current + 0.032 * U_wind"
+  surface_current_transport_factor: 1.00
+  windage_leeway_factor: 0.032  # 3.2% of 10-meter atmospheric wind speed
+  coriolis_deflection_deg: 15.0 # Positive in Northern Hemisphere, negative in Southern Hemisphere
+  max_backtrack_horizon_hours: 12.0
+  time_step_minutes: 15
+
+vessel_attribution:
+  candidate_search_radius_km: 25.0
+  temporal_search_window_hours: 6.0
+  scoring_matrix_weights:
+    spatial_proximity_cpa: 0.40      # Closest Point of Approach distance
+    temporal_alignment: 0.30          # Gaussian temporal decay (sigma = 2.0 hrs)
+    course_heading_alignment: 0.15   # Trajectory vector aligned with slick orientation
+    vessel_type_risk_factor: 0.15    # Prior likelihood (Crude Tanker > Bunker Barge > Cargo > Tug)
+  temporal_gaussian_sigma_hours: 2.0
+  causality_rules:
+    enforce_physical_causality: true
+    post_observation_cutoff_hours: -0.50  # Vessels arriving > 30 min after slick image penalize by 0.1x
+    speed_thresholds_knots:
+      min_operational_speed: 1.0     # Disregard anchored/docked vessels unless at mooring buoy
+      max_transit_speed: 26.0
+
+vessel_registry_apis:
+  marine_traffic:
+    enabled: true
+    photo_cdn: "https://photos.marinetraffic.com/ais/showphoto.aspx"
+  vessel_finder:
+    enabled: true
+    photo_cdn: "https://images.vesselfinder.net/vessels"
+  wikimedia_commons:
+    enabled: true
+    sparql_endpoint: "https://query.wikidata.org/sparql"
+  stac_cloud_catalogs:
+    planetary_computer: "https://planetarycomputer.microsoft.com/api/stac/v1"
+    aws_earth_search: "https://earth-search.aws.element84.com/v1"
+
+reporting:
+  export_formats: ["csv", "geojson", "json", "markdown", "interactive_html"]
+  lead_agency_notification_template: "Copernicus_EMSR_EMSA_CSN_Standard"

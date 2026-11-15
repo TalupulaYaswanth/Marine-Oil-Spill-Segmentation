@@ -7,6 +7,7 @@ Demonstrates:
   - U-Net instantiation for single-channel SAR input.
   - Combined BCEDiceLoss formulation for severe class imbalance.
   - Training, validation, IoU / F1 tracking, and checkpointing.
+  - Graceful fallback for non-PyTorch environments with operational EMSA CFAR evaluation.
 """
 
 import os
@@ -18,14 +19,20 @@ from typing import Tuple
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-import torch
-from torch.utils.data import DataLoader
-
-from src.segmentation.dataset import SAROilSpillDataset
-from src.segmentation.unet import SAROilSpillUNet
-from src.segmentation.losses import BCEDiceLoss
-from src.segmentation.trainer import OilSpillTrainer
 from generate_sample_patches import generate_synthetic_patches
+from src.segmentation.inference import OilSpillSegmenter
+
+# Try importing torch
+try:
+    import torch
+    from torch.utils.data import DataLoader
+    from src.segmentation.dataset import SAROilSpillDataset
+    from src.segmentation.unet import SAROilSpillUNet
+    from src.segmentation.losses import BCEDiceLoss
+    from src.segmentation.trainer import OilSpillTrainer
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
 
 
 def main():
@@ -44,12 +51,41 @@ def main():
 
     args = parser.parse_args()
 
-    # If directories not specified or don't exist, generate synthetic patches for demonstration
+    # Generate synthetic patches if needed
     if not args.train_images or not os.path.exists(args.train_images):
         train_img_dir, train_mask_dir, val_img_dir, val_mask_dir = generate_synthetic_patches()
     else:
         train_img_dir, train_mask_dir = args.train_images, args.train_masks
         val_img_dir, val_mask_dir = args.val_images, args.val_masks
+
+    if not HAS_TORCH:
+        print("\n" + "="*70)
+        print("ℹ️  NOTE: PyTorch is not currently installed in this Python environment.")
+        print("    Running Phase 2 Operational EMSA CleanSeaNet CFAR Segmentation Evaluator...")
+        print("    To enable GPU/CPU Deep Learning U-Net training, run:")
+        print("        pip install torch --index-url https://download.pytorch.org/whl/cpu")
+        print("="*70 + "\n")
+
+        # Evaluate validation set with CFAR detector
+        segmenter = OilSpillSegmenter(detection_threshold=0.50)
+        import tifffile
+        val_files = [f for f in os.listdir(val_img_dir) if f.endswith(".npy") or f.endswith(".tif")][:5]
+        print(f"[Phase 2 Validation] Evaluating {len(val_files)} SAR validation scenes with CFAR detector:")
+
+        for vf in val_files:
+            vpath = os.path.join(val_img_dir, vf)
+            if vf.endswith(".npy"):
+                import numpy as np
+                img = np.load(vpath)
+            else:
+                import tifffile
+                img = tifffile.imread(vpath)
+
+            res = segmenter.segment_sar_image(img)
+            print(f"  -> Scene: {vf[:25]} | Slick Area: {res['slick_area_km2']:.2f} km² | Damping Contrast: {res['damping_contrast_db']} dB | Conf: {res['mean_confidence']:.3f}")
+
+        print("\n=== Phase 2 Validation Benchmark Completed Successfully! ===")
+        return
 
     # 1. Instantiate Datasets
     print("\n[1/4] Loading Datasets...")

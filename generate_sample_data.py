@@ -101,14 +101,13 @@ def generate_sample_ais_csv(output_csv_path: str) -> str:
         })
 
     df = pd.DataFrame(records)
-    # Shuffle slightly to emulate raw asynchronous AIS receiver feeds
     df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
     df.to_csv(output_csv_path, index=False)
     print(f"Generated sample AIS CSV ({len(df)} records) at: {output_csv_path}")
     return output_csv_path
 
 
-def generate_sample_sar_geotiff(output_tif_path: str) -> Optional[str]:
+def generate_sample_sar_geotiff(output_tif_path: str) -> str:
     """
     Generates a realistic synthetic Sentinel-1 SAR GeoTIFF with:
       - Coordinate system: EPSG:4326 (WGS84)
@@ -117,27 +116,16 @@ def generate_sample_sar_geotiff(output_tif_path: str) -> Optional[str]:
       - Bright vessel return points
       - NoData border margins
     """
-    try:
-        import rasterio
-        from rasterio.transform import from_bounds
-    except ImportError:
-        print("Note: rasterio is not installed yet. Skipping synthetic GeoTIFF creation.")
-        return None
-
     os.makedirs(os.path.dirname(os.path.abspath(output_tif_path)), exist_ok=True)
 
-    # Image specs: 512 x 512 pixels
     height, width = 512, 512
     bounds = (-5.50, 36.00, -4.80, 36.50)  # min_lon, min_lat, max_lon, max_lat
-    transform = from_bounds(*bounds, width, height)
 
-    # 1. Base sea surface clutter (Rayleigh/Gamma distribution in linear intensity)
-    # Sea backscatter typically ranges around -15 dB to -10 dB in VV
+    # 1. Base sea surface clutter (Gamma distribution in linear intensity)
     np.random.seed(42)
     sea_clutter_linear = np.random.gamma(shape=3.0, scale=0.03, size=(height, width)).astype(np.float32)
 
     # 2. Add an oil slick anomaly (dark patch with ~6-10 dB damping)
-    # Elliptical spill region centered at pixel (260, 240)
     y, x = np.ogrid[:height, :width]
     slick_mask = (((x - 260) / 45) ** 2 + ((y - 240) / 18) ** 2) <= 1.0
     sea_clutter_linear[slick_mask] *= 0.12  # drastic damping due to surfactant film
@@ -153,29 +141,53 @@ def generate_sample_sar_geotiff(output_tif_path: str) -> Optional[str]:
     sea_clutter_linear[:, :15] = nodata_val
     sea_clutter_linear[:, -15:] = nodata_val
 
-    # Write GeoTIFF
-    profile = {
-        "driver": "GTiff",
-        "dtype": rasterio.float32,
-        "nodata": nodata_val,
-        "width": width,
-        "height": height,
-        "count": 1,
-        "crs": "EPSG:4326",
-        "transform": transform
-    }
+    # Try rasterio first
+    try:
+        import rasterio
+        from rasterio.transform import from_bounds
+        transform = from_bounds(*bounds, width, height)
+        profile = {
+            "driver": "GTiff",
+            "dtype": "float32",
+            "nodata": nodata_val,
+            "width": width,
+            "height": height,
+            "count": 1,
+            "crs": "EPSG:4326",
+            "transform": transform
+        }
+        with rasterio.open(output_tif_path, "w", **profile) as dst:
+            dst.write(sea_clutter_linear, 1)
+            dst.update_tags(
+                ACQUISITION_DATETIME="2024-05-15T06:30:00Z",
+                MISSION="SENTINEL-1A",
+                POLARIZATION="VV",
+                SENSOR_MODE="IW_GRDH"
+            )
+        print(f"Generated synthetic Sentinel-1 SAR GeoTIFF (via rasterio) at: {output_tif_path}")
+        return output_tif_path
+    except ImportError:
+        pass
 
-    with rasterio.open(output_tif_path, "w", **profile) as dst:
-        dst.write(sea_clutter_linear, 1)
-        # Store acquisition datetime in GeoTIFF tag
-        dst.update_tags(
-            ACQUISITION_DATETIME="2024-05-15T06:30:00Z",
-            MISSION="SENTINEL-1A",
-            POLARIZATION="VV",
-            SENSOR_MODE="IW_GRDH"
+    # Fallback to tifffile
+    try:
+        import tifffile
+        tifffile.imwrite(
+            output_tif_path,
+            sea_clutter_linear,
+            description="ACQUISITION_DATETIME=2024-05-15T06:30:00Z;MISSION=SENTINEL-1A;POLARIZATION=VV"
         )
+        print(f"Generated synthetic Sentinel-1 SAR GeoTIFF (via tifffile) at: {output_tif_path}")
+        return output_tif_path
+    except ImportError:
+        pass
 
-    print(f"Generated synthetic Sentinel-1 SAR GeoTIFF at: {output_tif_path}")
+    # Fallback to PIL
+    from PIL import Image
+    im_arr = np.nan_to_num(sea_clutter_linear, nan=0.0)
+    im_norm = (np.clip(im_arr / np.percentile(im_arr[im_arr > 0], 99), 0.0, 1.0) * 255).astype(np.uint8)
+    Image.fromarray(im_norm).save(output_tif_path)
+    print(f"Generated synthetic Sentinel-1 SAR TIFF (via PIL) at: {output_tif_path}")
     return output_tif_path
 
 

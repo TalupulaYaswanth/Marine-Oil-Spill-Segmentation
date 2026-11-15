@@ -8,11 +8,11 @@ import os
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
-import geopandas as gpd
+import pandas as pd
 import numpy as np
 
 from .sar_preprocessor import SARImagePreprocessor, SARMetadata
-from .ais_preprocessor import AISPreprocessor
+from .ais_preprocessor import AISPreprocessor, export_gdf_or_df_to_geojson
 
 
 class Phase1PreprocessingPipeline:
@@ -114,13 +114,14 @@ class Phase1PreprocessingPipeline:
         # Export filtered AIS points
         filtered_pings_path = os.path.join(output_dir, "filtered_ais_pings.geojson")
         filtered_pings_csv_path = os.path.join(output_dir, "filtered_ais_pings.csv")
-        filtered_ais_gdf.to_file(filtered_pings_path, driver="GeoJSON")
+        export_gdf_or_df_to_geojson(filtered_ais_gdf, filtered_pings_path)
+
         # Also export CSV for convenient inspection
         filtered_ais_gdf.drop(columns=["geometry"], errors="ignore").to_csv(filtered_pings_csv_path, index=False)
 
         # Export trajectories
         trajectories_path = os.path.join(output_dir, "vessel_trajectories.geojson")
-        trajectories_gdf.to_file(trajectories_path, driver="GeoJSON")
+        export_gdf_or_df_to_geojson(trajectories_gdf, trajectories_path)
 
         print(f"  -> Saved filtered AIS pings to: {filtered_pings_path}")
         print(f"  -> Saved vessel trajectories to: {trajectories_path}")
@@ -137,4 +138,3 @@ class Phase1PreprocessingPipeline:
             "num_candidate_vessels": len(trajectories_gdf),
             "candidate_mmsis": trajectories_gdf["mmsi"].tolist() if not trajectories_gdf.empty else []
         }
-
