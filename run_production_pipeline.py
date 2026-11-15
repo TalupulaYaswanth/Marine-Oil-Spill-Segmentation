@@ -25,6 +25,10 @@ from typing import Dict, Any, List, Optional, Tuple
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+# Configure Matplotlib writable cache directory to prevent cache warnings
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.environ.get("TEMP", "."), "matplotlib_cache"))
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -417,7 +421,9 @@ def main():
     )
     print(f"  -> Primary Suspect: {vessel_details['vessel_name']}")
     print(f"  -> Flag State: {vessel_details['flag']} | Vessel Type: {vessel_details['vessel_type']}")
-    print(f"  -> Dimensions: {vessel_details.get('length_beam', 'N/A')} | Gross Tonnage: {vessel_details.get('gross_tonnage', 0):,} GT")
+    gt_val = vessel_details.get("gross_tonnage", "N/A")
+    gt_str = f"{int(gt_val):,} GT" if str(gt_val).isdigit() else (f"{gt_val} GT" if gt_val != "N/A" else "N/A")
+    print(f"  -> Dimensions: {vessel_details.get('length_beam', 'N/A')} | Gross Tonnage: {gt_str}")
     print(f"  -> Verified Photo URL: {vessel_details['image_url']}")
 
     # 9. Export Artifacts
@@ -499,7 +505,7 @@ Spatiotemporal AIS trajectory correlation and NOAA ADIOS-2 leeway drift backtrac
 - **Flag State:** {vessel_details['flag']}
 - **Vessel Type:** {vessel_details['vessel_type']}
 - **Dimensions:** {vessel_details.get('length_beam', 'N/A')}
-- **Gross Tonnage:** {vessel_details.get('gross_tonnage', 0):,} GT
+- **Gross Tonnage:** {gt_str}
 - **Closest Point of Approach (CPA):** {top_suspect['closest_distance_km']:.2f} km
 - **Temporal Offset ($\\\\Delta t$):** {top_suspect['time_delta_hours']:+.2f} hours
 - **Physical Causality Verified:** {'✅ YES (Preceded or coincided with slick detection)' if top_suspect.get('is_causally_valid', True) else '❌ NO'}

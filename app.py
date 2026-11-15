@@ -31,6 +31,10 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 # Try importing folium and streamlit-folium
 try:
@@ -800,11 +804,13 @@ def main():
                 with p_c1:
                     st.image(v_details["image_url"], caption=f"{v_details['caption']}\n(Source: {v_details['photo_attribution']})", width="stretch")
                 with p_c2:
+                    gt_val = v_details.get("gross_tonnage", "N/A")
+                    gt_str = f"{int(gt_val):,} GT" if str(gt_val).isdigit() else (f"{gt_val} GT" if gt_val != "N/A" else "N/A")
                     st.markdown(f"""
                     - **Attribution Score:** <span style="font-size:20px; font-weight:700; color:#00ADB5;">{top_sus['attribution_score']:.4f} / 1.0000</span>
                     - **MMSI:** `{int(top_sus['mmsi'])}` | **IMO:** `{v_details['imo']}` | **Flag:** {v_details['flag']}
                     - **Vessel Classification:** {v_details['vessel_type']}
-                    - **Dimensions:** {v_details.get('length_beam', 'N/A')} | **Gross Tonnage:** {v_details.get('gross_tonnage', 0):,} GT
+                    - **Dimensions:** {v_details.get('length_beam', 'N/A')} | **Gross Tonnage:** {gt_str}
                     - **Closest Point of Approach (CPA):** **{top_sus['closest_distance_km']:.2f} km** from observed spill
                     - **Temporal Offset:** **{top_sus['time_delta_hours']:+.2f} hours**
                     - **Physical Causality Verified:** {'✅ Valid (Preceded or coincided with spill)' if top_sus.get('is_causally_valid', True) else '❌ Non-causal'}
@@ -815,6 +821,11 @@ def main():
             d_c1, d_c2, d_c3 = st.columns(3)
             with d_c1:
                 # Markdown Report
+                sus_name_str = v_details['vessel_name'] if v_details else 'N/A'
+                sus_mmsi_str = str(int(top_sus['mmsi'])) if top_sus is not None else 'N/A'
+                sus_score_str = f"{top_sus['attribution_score']:.4f}" if top_sus is not None else 'N/A'
+                sus_cpa_str = f"{top_sus['closest_distance_km']:.2f} km" if top_sus is not None else 'N/A'
+
                 rep_md = f"""# 🛰️ MARITIME OIL SPILL FORENSIC INVESTIGATION REPORT
 **Reference Standard:** SkyTruth Cerulean & EMSA CleanSeaNet Operational Protocol  
 **Incident:** {incident_name}  
@@ -825,10 +836,10 @@ def main():
 Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly covering **{seg_out['slick_area_km2']:.2f} km²** with **-{seg_out['damping_contrast_db']} dB** capillary wave damping.
 
 ## 2. Suspect Vessel Attribution
-- **Primary Suspect:** {v_details['vessel_name'] if v_details else 'N/A'}
-- **MMSI:** {int(top_sus['mmsi']) if top_sus is not None else 'N/A'}
-- **Attribution Score:** {top_sus['attribution_score']:.4f if top_sus is not None else 'N/A'}
-- **Closest Approach:** {top_sus['closest_distance_km']:.2f} km
+- **Primary Suspect:** {sus_name_str}
+- **MMSI:** {sus_mmsi_str}
+- **Attribution Score:** {sus_score_str}
+- **Closest Approach:** {sus_cpa_str}
 """
                 st.download_button(
                     label="📄 Download Forensic Report (Markdown)",
@@ -989,8 +1000,6 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
 
     with tab_analytics:
         st.markdown("### Multi-Vessel Speed & Heading Telemetry")
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
 
