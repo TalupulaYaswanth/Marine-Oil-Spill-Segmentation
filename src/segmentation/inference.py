@@ -157,9 +157,9 @@ class OilSpillSegmenter:
             "polygon": spill_polygon,
             "slick_pixels": slick_pixels,
             "coverage_pct": round(coverage_pct, 3),
-            "slick_area_km2": max(slick_area_km2, 0.28),
-            "mean_confidence": round(mean_confidence if mean_confidence > 0 else 0.942, 3),
-            "damping_contrast_db": damping_contrast_db,
+            "slick_area_km2": round(slick_area_km2, 2) if slick_pixels > 0 else 0.0,
+            "mean_confidence": round(mean_confidence, 3) if slick_pixels > 0 else 0.0,
+            "damping_contrast_db": damping_contrast_db if slick_pixels > 0 else 0.0,
             "engine": engine_name,
             "bounds_wgs84": bounds_wgs84
         }

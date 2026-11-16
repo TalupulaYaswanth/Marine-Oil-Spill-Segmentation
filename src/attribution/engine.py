@@ -87,7 +87,12 @@ class VesselAttributionEngine:
         if spill_timestamp.tzinfo is None:
             spill_timestamp = spill_timestamp.replace(tzinfo=timezone.utc)
 
+        if ais_data is None or len(ais_data) == 0:
+            return self._finalize_rankings([], as_gdf=HAS_GEOSPATIAL)
+
         df = ais_data.copy()
+        if "timestamp" not in df.columns:
+            return self._finalize_rankings([], as_gdf=HAS_GEOSPATIAL)
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
         if HAS_GEOSPATIAL and hasattr(spill_polygon, "is_empty") and not spill_polygon.is_empty:

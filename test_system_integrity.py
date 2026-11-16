@@ -182,6 +182,18 @@ def test_drift_physics():
     assert res_sh["origin_lat"] is not None
     assert res_sh["total_distance_km"] > 0
 
+    # Test extreme polar latitude edge case (near 90 deg)
+    res_polar = model.backtrack_slick_origin(
+        center_lon=0.0,
+        center_lat=89.95,
+        hours_elapsed=2.0,
+        current_speed_ms=0.1,
+        current_direction_deg=0.0,
+        wind_speed_ms=5.0,
+        wind_direction_from_deg=180.0
+    )
+    assert res_polar["origin_lat"] is not None
+
 
 # ----------------------------------------------------------------------
 # 5. Mask Vectorizer Tests
@@ -230,6 +242,13 @@ def test_segmentation_engine():
     assert res["binary_mask"].shape == (128, 128)
     assert res["slick_pixels"] > 0
 
+    # Clean ocean edge case (zero slick)
+    clean_img = np.full((128, 128), 0.5, dtype=np.float32)
+    res_clean = seg.segment_sar_image(clean_img, bounds_wgs84=(-5.5, 36.0, -4.8, 36.5))
+    assert res_clean["slick_pixels"] == 0
+    assert res_clean["slick_area_km2"] == 0.0
+    assert res_clean["mean_confidence"] == 0.0
+
 
 # ----------------------------------------------------------------------
 # 7. Vessel Attribution Engine Tests
@@ -254,6 +273,22 @@ def test_vessel_attribution_engine():
     assert "is_causally_valid" in ranked.columns
     assert ranked.iloc[0]["rank"] == 1
     assert ranked.iloc[0]["attribution_score"] > 0
+
+    # Test empty AIS dataframe edge case
+    empty_ranked = engine.attribute_suspect_vessels(
+        spill_polygon=spill_coords,
+        ais_data=pd.DataFrame(),
+        spill_timestamp=spill_time
+    )
+    assert empty_ranked.empty
+
+    # Test empty spill coords edge case
+    empty_poly_ranked = engine.attribute_suspect_vessels(
+        spill_polygon=[],
+        ais_data=ais_df,
+        spill_timestamp=spill_time
+    )
+    assert "rank" in empty_poly_ranked.columns
 
 
 # ----------------------------------------------------------------------

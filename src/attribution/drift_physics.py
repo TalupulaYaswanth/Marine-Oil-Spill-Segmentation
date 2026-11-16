@@ -110,7 +110,7 @@ class HydrodynamicDriftModel:
         # 1 deg lat ~ 111,139 m; 1 deg lon ~ 111,139 * cos(lat) m
         lat_rad = math.radians(center_lat)
         dlat = dy_m / 111139.0
-        dlon = dx_m / (111139.0 * math.cos(lat_rad))
+        dlon = dx_m / (111139.0 * max(math.cos(lat_rad), 1e-6))
 
         # Origin position (subtract displacement because backtracking into the past)
         origin_lat = center_lat - dlat

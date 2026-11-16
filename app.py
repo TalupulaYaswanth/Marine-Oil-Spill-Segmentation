@@ -877,6 +877,7 @@ def main():
                 ax_sar.axis("off")
                 fig_sar.tight_layout()
                 st.pyplot(fig_sar)
+                plt.close(fig_sar)
 
             with v_col2:
                 st.markdown("#### 2. Deep Learning / CFAR Slick Probability Heatmap")
@@ -888,6 +889,7 @@ def main():
                 ax_seg.axis("off")
                 fig_seg.tight_layout()
                 st.pyplot(fig_seg)
+                plt.close(fig_seg)
 
             # Primary Suspect Card
             if v_details and top_sus is not None:
@@ -1073,13 +1075,20 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                 try:
                     if fname.endswith(".npy"):
                         loaded = np.load(uploaded_sar)
+                        loaded = np.squeeze(loaded)
                         if loaded.ndim == 3:
                             loaded = loaded[0]
-                        sar_test_image = loaded
+                        if loaded.ndim != 2:
+                            raise ValueError(f"Uploaded NumPy array must be 2D SAR image, got shape {loaded.shape}")
+                        sar_test_image = loaded.astype(np.float32)
                     elif fname.endswith((".tif", ".tiff")):
                         try:
                             import tifffile
-                            sar_test_image = tifffile.imread(uploaded_sar).astype(np.float32)
+                            loaded = tifffile.imread(uploaded_sar)
+                            loaded = np.squeeze(loaded)
+                            if loaded.ndim == 3:
+                                loaded = loaded[0]
+                            sar_test_image = loaded.astype(np.float32)
                         except Exception:
                             from PIL import Image
                             pil_im = Image.open(uploaded_sar).convert("L")
@@ -1089,10 +1098,12 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                         pil_im = Image.open(uploaded_sar).convert("L")
                         sar_test_image = np.array(pil_im, dtype=np.float32)
 
-                    # Normalize array to [0, 1]
+                    # Normalize array to [0, 1] with nan/inf immunity
                     if sar_test_image is not None:
+                        sar_test_image = np.squeeze(sar_test_image)
                         if sar_test_image.ndim == 3:
                             sar_test_image = sar_test_image[0]
+                        sar_test_image = np.nan_to_num(sar_test_image, nan=0.0, posinf=1.0, neginf=0.0)
                         p1, p99 = np.percentile(sar_test_image, (1.0, 99.0))
                         sar_test_image = np.clip((sar_test_image - p1) / max(p99 - p1, 1e-5), 0.0, 1.0)
                         img_title = f"Uploaded: {uploaded_sar.name}"
@@ -1169,9 +1180,10 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                 """, unsafe_allow_html=True)
 
                 # Metric Cards
+                damp_str = f"-{abs(damping_db):.1f} dB" if damping_db > 0.05 else "0.0 dB"
                 am1, am2, am3, am4 = st.columns(4)
                 am1.metric("Detected Slick Footprint", f"{slick_area:.2f} km²", delta=f"{slick_px:,} pixels")
-                am2.metric("Capillary Damping Contrast", f"-{damping_db:.1f} dB", delta="Wave suppression")
+                am2.metric("Capillary Damping Contrast", damp_str, delta="Wave suppression")
                 am3.metric("Mean Detection Confidence", f"{mean_conf*100:.1f}%", delta="Model Certainty")
                 am4.metric("Metallic Vessel Scatterers", f"{num_vessels} detected", delta="CFAR Targets")
 
@@ -1209,6 +1221,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
 
                 fig_diag.tight_layout()
                 st.pyplot(fig_diag)
+                plt.close(fig_diag)
 
                 # Export Artifacts
                 st.markdown("##### 📥 Export Diagnostic Verification Artifacts")
@@ -1296,6 +1309,16 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
             disp_df = ranked_suspects.copy()
             if "geometry" in disp_df.columns:
                 disp_df = disp_df.drop(columns=["geometry"])
+            float_cols = {
+                "attribution_score": 4,
+                "closest_distance_km": 2,
+                "time_delta_hours": 2,
+                "closest_speed_knots": 1,
+                "closest_course_deg": 1
+            }
+            for col, dec in float_cols.items():
+                if col in disp_df.columns:
+                    disp_df[col] = pd.to_numeric(disp_df[col], errors="coerce").round(dec)
 
             st.dataframe(disp_df, width="stretch", hide_index=True)
 
@@ -1333,42 +1356,49 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
     with tab_analytics:
         st.markdown("### Multi-Vessel Speed & Heading Telemetry")
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
-        apply_dark_style(fig, [ax1, ax2])
+        if ais_df.empty:
+            st.info("No AIS vessel telemetry available for the active selection.")
+        else:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+            apply_dark_style(fig, [ax1, ax2])
 
-        # Standardize timestamps for matplotlib unit conversion
-        ais_df_plot = ais_df.copy()
-        ais_df_plot["plot_time"] = pd.to_datetime(ais_df_plot["timestamp"], utc=True).dt.tz_convert(None)
-        spill_time_dt = pd.to_datetime(spill_time).tz_convert(None)
+            # Standardize timestamps for matplotlib unit conversion
+            ais_df_plot = ais_df.copy()
+            ts_series = pd.to_datetime(ais_df_plot["timestamp"], utc=True)
+            ais_df_plot["plot_time"] = ts_series.dt.tz_convert(None)
 
-        for mmsi, grp in ais_df_plot.groupby("mmsi"):
-            grp_s = grp.sort_values("plot_time")
-            mmsi_int = int(mmsi)
-            v_name = str(grp_s.iloc[0].get("vessel_name", f"MMSI {mmsi_int}"))
-            is_top = (not ranked_suspects.empty and mmsi_int == int(top_suspect["mmsi"]))
-            color = "#FF0055" if is_top else None
-            lw = 2.5 if is_top else 1.2
-            label = f"{v_name} ({'Primary Suspect' if is_top else 'Ambient'})"
+            sp_ts = pd.to_datetime(spill_time)
+            spill_time_dt = sp_ts.tz_convert(None) if sp_ts.tzinfo is not None else sp_ts
 
-            ax1.plot(grp_s["plot_time"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
-            ax2.plot(grp_s["plot_time"], grp_s["course"], marker="s", label=label, color=color, linewidth=lw)
+            for mmsi, grp in ais_df_plot.groupby("mmsi"):
+                grp_s = grp.sort_values("plot_time")
+                mmsi_int = int(mmsi)
+                v_name = str(grp_s.iloc[0].get("vessel_name", f"MMSI {mmsi_int}"))
+                is_top = (not ranked_suspects.empty and mmsi_int == int(top_suspect["mmsi"]))
+                color = "#FF0055" if is_top else None
+                lw = 2.5 if is_top else 1.2
+                label = f"{v_name} ({'Primary Suspect' if is_top else 'Ambient'})"
 
-        ax1.axvline(spill_time_dt, color="#F39C12", linestyle="--", label=f"Satellite Image ({spill_time_str[:16]})")
-        ax2.axvline(spill_time_dt, color="#F39C12", linestyle="--")
+                ax1.plot(grp_s["plot_time"], grp_s["speed"], marker="o", label=label, color=color, linewidth=lw)
+                ax2.plot(grp_s["plot_time"], grp_s["course"], marker="s", label=label, color=color, linewidth=lw)
 
-        ax1.set_ylabel("Speed (knots)")
-        ax1.set_title("Vessel Speed Over Ground (SOG)")
-        ax1.grid(True, linestyle=":", alpha=0.6)
-        ax1.legend(loc="upper right", fontsize=8)
+            ax1.axvline(spill_time_dt, color="#F39C12", linestyle="--", label=f"Satellite Image ({spill_time_str[:16]})")
+            ax2.axvline(spill_time_dt, color="#F39C12", linestyle="--")
 
-        ax2.set_ylabel("Course Over Ground (°)")
-        ax2.set_title("Vessel Navigation Heading (COG)")
-        ax2.set_xlabel("UTC Timestamp")
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
-        ax2.grid(True, linestyle=":", alpha=0.6)
+            ax1.set_ylabel("Speed (knots)")
+            ax1.set_title("Vessel Speed Over Ground (SOG)")
+            ax1.grid(True, linestyle=":", alpha=0.6)
+            ax1.legend(loc="upper right", fontsize=8)
 
-        fig.tight_layout()
-        st.pyplot(fig)
+            ax2.set_ylabel("Course Over Ground (°)")
+            ax2.set_title("Vessel Navigation Heading (COG)")
+            ax2.set_xlabel("UTC Timestamp")
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
+            ax2.grid(True, linestyle=":", alpha=0.6)
+
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
 
 
 if __name__ == "__main__":
