@@ -686,32 +686,89 @@ def main():
         st.markdown("---")
         run_pipeline_clicked = st.button("⚡ Execute Full Production Pipeline Now", type="primary", use_container_width=True)
 
-        prod_key = f"prod_results_{incident_name}"
+        cur_drift_h = hours_drift if drift_enabled else 0.0
+        cur_w_spd = wind_spd if drift_enabled else 0.0
+        cur_w_dir = wind_dir if drift_enabled else 0.0
+        prod_key = f"prod_res_{incident_name}_{cur_drift_h}_{cur_w_spd}_{cur_w_dir}"
+
         if run_pipeline_clicked or prod_key in st.session_state:
             if run_pipeline_clicked or prod_key not in st.session_state:
                 with st.spinner(f"Executing SOTA Production Pipeline for {incident_name}..."):
-                    # 1. Synthesize incident-specific SAR patch with exact spill geometry and vessel scatterers
                     height, width = 512, 512
                     min_lon, min_lat, max_lon, max_lat = sar_bounds
-                    
-                    # Background sea clutter with unique seed per incident
-                    np.random.seed(abs(hash(incident_name)) % (2**32))
-                    sea_clutter = np.random.gamma(shape=3.0, scale=0.03, size=(height, width)).astype(np.float32)
-                    
-                    # Map spill center into pixel space
                     y_grid, x_grid = np.ogrid[:height, :width]
-                    c_x = int(np.clip(((map_center[1] - min_lon) / max(max_lon - min_lon, 1e-5)) * width, 60, width - 60))
-                    c_y = int(np.clip(((max_lat - map_center[0]) / max(max_lat - min_lat, 1e-5)) * height, 60, height - 60))
-                    
-                    # Aspect ratio and size from incident spill polygon
-                    lons = [c[0] for c in spill_coords]
-                    lats = [c[1] for c in spill_coords]
-                    span_x = max(int(((max(lons) - min(lons)) / max(max_lon - min_lon, 1e-5)) * width * 1.5), 35)
-                    span_y = max(int(((max(lats) - min(lats)) / max(max_lat - min_lat, 1e-5)) * height * 1.5), 20)
-                    
-                    slick_mask = (((x_grid - c_x) / span_x) ** 2 + ((y_grid - c_y) / span_y) ** 2) <= 1.0
-                    sea_clutter[slick_mask] *= 0.12  # 8 to 12 dB capillary damping
-                    
+
+                    # Unique, deterministic sea clutter seed per incident
+                    np.random.seed(abs(hash(incident_name)) % (2**31))
+                    sea_clutter = np.random.gamma(shape=3.0, scale=0.03, size=(height, width)).astype(np.float32)
+
+                    # Dynamic drift displacement based on NOAA leeway parameters
+                    rad_w = np.radians(cur_w_dir)
+                    dx_drift = int(-np.sin(rad_w) * (cur_drift_h * 4.5))
+                    dy_drift = int(np.cos(rad_w) * (cur_drift_h * 4.5))
+
+                    if "Mississippi" in incident_name:
+                        # Pass A Loutre / Mississippi Delta coastal marshland in top-left
+                        marsh_mask = (x_grid < 160) & (y_grid < 200) & ((x_grid * 1.2 + y_grid * 0.8) < 220)
+                        sea_clutter[marsh_mask] = 1.9  # Bright coastal vegetation
+                        # Dispersing river mouth plume
+                        cx, cy = int(np.clip(220 + dx_drift, 60, 450)), int(np.clip(240 + dy_drift, 60, 450))
+                        slick_mask = (((x_grid - cx) / 60) ** 2 + ((y_grid - cy) / 28) ** 2) <= 1.0
+                        sea_clutter[slick_mask] *= 0.10
+
+                    elif "Malacca" in incident_name:
+                        # Narrow shipping corridor: long linear tanker bilge streak (125° course)
+                        t_pts = np.linspace(0, 1, 350)
+                        px = (80 + t_pts * 350 + dx_drift).astype(int)
+                        py = (120 + t_pts * 260 + dy_drift).astype(int)
+                        valid = (px >= 5) & (px < width - 5) & (py >= 5) & (py < height - 5)
+                        for sx, sy in zip(px[valid], py[valid]):
+                            sea_clutter[max(0, sy-9):min(height, sy+10), max(0, sx-9):min(width, sx+10)] *= 0.11
+
+                    elif "Wakashio" in incident_name:
+                        # Mauritius barrier coral reef (bright breaking wave surf line)
+                        reef = (x_grid >= 220) & (x_grid <= 235) & (y_grid >= 60) & (y_grid <= 440)
+                        sea_clutter[reef] = 2.6
+                        # Trapped coastal lagoon heavy fuel oil slick
+                        cx, cy = int(np.clip(160 + dx_drift * 0.4, 40, 210)), int(np.clip(260 + dy_drift * 0.4, 80, 400))
+                        slick_mask = (((x_grid - cx) / 45) ** 2 + ((y_grid - cy) / 100) ** 2) <= 1.0
+                        sea_clutter[slick_mask] *= 0.08
+                        # Grounded bulk carrier wreck radar echo
+                        sea_clutter[cy-3:cy+4, cx+50:cx+57] = 4.2
+
+                    elif "Persian" in incident_name or "Hormuz" in incident_name:
+                        # Offshore rig / pipeline blowout: concentric circular sheen
+                        cx, cy = int(np.clip(260 + dx_drift, 80, 430)), int(np.clip(240 + dy_drift, 80, 430))
+                        dist_c = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
+                        slick_mask = (dist_c <= 75)
+                        sea_clutter[slick_mask] *= 0.12
+                        sea_clutter[cy-3:cy+4, cx-3:cx+4] = 3.6  # Offshore production platform
+
+                    elif "English" in incident_name or "Channel" in incident_name:
+                        # High sea state swell wave texture
+                        swells = 0.012 * np.sin(x_grid * 0.14 + y_grid * 0.08)
+                        sea_clutter += swells
+                        # Dispersed turbulent multi-patch slick
+                        cx, cy = int(np.clip(250 + dx_drift, 70, 440)), int(np.clip(250 + dy_drift, 70, 440))
+                        p1_mask = (((x_grid - cx) / 45) ** 2 + ((y_grid - cy) / 22) ** 2) <= 1.0
+                        p2_mask = (((x_grid - (cx + 60)) / 30) ** 2 + ((y_grid - (cy - 35)) / 18) ** 2) <= 1.0
+                        sea_clutter[p1_mask | p2_mask] *= 0.12
+
+                    elif "Gibraltar" in incident_name:
+                        # Rock of Gibraltar coastline at top
+                        land = (y_grid < 100) & (x_grid > 150) & (x_grid < 380)
+                        sea_clutter[land] = 2.0
+                        # Container vessel wake and trailing slick
+                        cx, cy = int(np.clip(270 + dx_drift, 60, 450)), int(np.clip(290 + dy_drift, 120, 450))
+                        slick_mask = (((x_grid - cx) / 80) ** 2 + ((y_grid - cy) / 16) ** 2) <= 1.0
+                        sea_clutter[slick_mask] *= 0.12
+
+                    else:
+                        # Red Sea or generic
+                        cx, cy = int(np.clip(256 + dx_drift, 60, 450)), int(np.clip(256 + dy_drift, 60, 450))
+                        slick_mask = (((x_grid - cx) / 55) ** 2 + ((y_grid - cy) / 28) ** 2) <= 1.0
+                        sea_clutter[slick_mask] *= 0.12
+
                     # Add bright metallic vessel scatterers from candidate AIS pings
                     if not ais_df.empty:
                         for _, v_row in ais_df.groupby("mmsi").first().iterrows():
@@ -721,9 +778,9 @@ def main():
                                 px = int(np.clip(((v_lon - min_lon) / max(max_lon - min_lon, 1e-5)) * width, 3, width - 4))
                                 py = int(np.clip(((max_lat - v_lat) / max(max_lat - min_lat, 1e-5)) * height, 3, height - 4))
                                 sea_clutter[py-1:py+2, px-1:px+2] = 2.8  # Metallic hull return
-                    
+
                     # Decibel calibration and min-max normalization
-                    db_clutter = 10.0 * np.log10(sea_clutter + 1e-7)
+                    db_clutter = 10.0 * np.log10(np.maximum(sea_clutter, 1e-7))
                     p1, p99 = np.percentile(db_clutter, (1.0, 99.0))
                     norm_sar = np.clip((db_clutter - p1) / max(p99 - p1, 1e-5), 0.0, 1.0)[np.newaxis, :, :]
 
