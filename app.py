@@ -142,6 +142,22 @@ INCIDENT_PRESETS = {
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
+def apply_dark_style(fig, axes=None):
+    """Applies cohesive dark-mode styling to Matplotlib figures matching dashboard theme."""
+    fig.patch.set_facecolor("#0E1117")
+    if axes is None:
+        axes = fig.axes
+    elif not isinstance(axes, (list, tuple, np.ndarray)):
+        axes = [axes]
+    for ax in np.array(axes).flatten():
+        ax.set_facecolor("#161B22")
+        ax.tick_params(colors="#CCCCCC", which="both")
+        for spine in ax.spines.values():
+            spine.set_color("#30363D")
+        ax.xaxis.label.set_color("#E6EDF3")
+        ax.yaxis.label.set_color("#E6EDF3")
+        ax.title.set_color("#FFFFFF")
+        ax.grid(True, linestyle=":", alpha=0.3, color="#444C56")
 @st.cache_data
 def load_incident_spill_polygon(geojson_path: str) -> List[List[float]]:
     """Loads GeoJSON spill geometry into [[lon, lat], ...] coordinate ring."""
@@ -412,24 +428,19 @@ def render_leaflet_html_fallback(
 # Main Streamlit Application
 # ==============================================================================
 def main():
-    st.title("🛰️ Sentinel-1 SAR Marine Oil Spill & Vessel Attribution Engine")
-    st.markdown(
-        "**Real-World Geospatial Intelligence & Maritime Pollution Attribution** | "
-        "*Integrating Synthetic Aperture Radar (SAR) Earth Observation with AIS Trajectory Forensics.*"
-    )
-
     # -------------------------------------------------------------
     # Sidebar: Unified Incident Feed & Operational Surveillance
     # -------------------------------------------------------------
     st.sidebar.header("📁 Operational Surveillance Feeds")
 
     live_spills = LiveSpillMonitorService.get_live_spills()
+    icon_map = {"CRITICAL": "🔴", "HIGH": "🟡", "MODERATE": "🟠", "LOW": "🔵"}
     feed_options = [
-        f"🔴 [{s.get('threat_level', 'ACTIVE')}] {s.get('name', 'Marine Spill')} (Live NOAA Feed)"
+        f"{icon_map.get(s.get('threat_level', 'ACTIVE'), '🔴')} [{s.get('threat_level', 'ACTIVE')}] {s.get('name', 'Marine Spill')[:36]}"
         for s in live_spills
     ] + [
-        "🌊 Historical Benchmark 1: MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
-        "🚢 Historical Benchmark 2: Strait of Gibraltar Marine Highway Corridor"
+        "🌊 [BENCHMARK] MV Wakashio Disaster (Mauritius)",
+        "🚢 [BENCHMARK] Strait of Gibraltar Marine Highway"
     ]
 
     selected_feed = st.sidebar.selectbox("Select Active Surveillance Incident:", feed_options, index=0)
@@ -517,7 +528,7 @@ def main():
         is_live = True
         matching_spill = None
         for s in live_spills:
-            if s.get("name", "") in selected_feed:
+            if s.get("name", "")[:25] in selected_feed or s.get("name", "") in selected_feed:
                 matching_spill = s
                 break
         if matching_spill is None:
@@ -607,30 +618,45 @@ def main():
     )
 
     # -------------------------------------------------------------
-    # Case Study Overview Banner
+    # Hero Header: Executive Status & Incident Profile
     # -------------------------------------------------------------
-    if is_live:
-        now_utc = datetime.now(timezone.utc)
-        st.markdown(
-            f'<div style="background-color:#0D2128; border:1px solid #00ADB5; padding:8px 14px; border-radius:6px; margin-bottom:12px; font-size:13px; color:#E0F7FA;">'
-            f'🟢 <b>REAL-TIME SURVEILLANCE FEED ONLINE</b> &nbsp;|&nbsp; '
-            f'System UTC Clock: <b>{now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")}</b> &nbsp;|&nbsp; '
-            f'Status: <b>Streaming Active AIS Radar</b>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+    header_c1, header_c2 = st.columns([1.5, 1.0])
+    with header_c1:
+        st.markdown("""
+        <div style="margin-bottom:6px;">
+            <h2 style="margin:0; font-size:23px; font-weight:800; color:#FFFFFF; letter-spacing:-0.5px;">
+                🛰️ Sentinel-1 SAR Marine Oil Spill & Attribution Engine
+            </h2>
+            <div style="font-size:12px; color:#8B949E; margin-top:3px;">
+                Copernicus Radar Earth Observation &bull; AIS Trajectory Forensics &bull; NOAA ADIOS Leeway Physics
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if is_live:
+            now_utc = datetime.now(timezone.utc)
+            st.markdown(
+                f'<span style="background-color:#0D2128; border:1px solid #00ADB5; padding:3px 10px; border-radius:12px; font-size:11px; color:#00ADB5; font-weight:600;">'
+                f'🟢 LIVE SURVEILLANCE FEED ACTIVE &nbsp;•&nbsp; {now_utc.strftime("%H:%M:%S UTC")}'
+                f'</span>',
+                unsafe_allow_html=True
+            )
 
-    st.markdown(f'<div class="incident-badge">{incident_badge}</div>', unsafe_allow_html=True)
-    st.subheader(incident_name)
-    st.markdown(f"*{incident_desc}*")
+    with header_c2:
+        inc_title_clean = incident_name.replace("🔴 LIVE EMERGENCY: ", "")[:36]
+        threat_badge_text = incident_badge.split("|")[0].strip()
+        st.markdown(f"""
+        <div style="background:#161B22; border:1px solid #30363D; border-radius:8px; padding:10px 14px; font-size:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-weight:700; color:#FFFFFF; font-size:13px;">{inc_title_clean}</span>
+                <span class="incident-badge" style="margin:0; padding:2px 8px; font-size:10px;">{threat_badge_text}</span>
+            </div>
+            <div style="color:#8B949E; line-height:1.4;">
+                {incident_desc}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if is_live and 'next_pass' in locals():
-        st.info(
-            f"🛰️ **Sentinel-1 Constellation Live Orbital Schedule:** "
-            f"Next SAR overpass over this marine sector in **{next_pass['countdown_hours']} hours** "
-            f"({next_pass['next_overpass_utc']}) | Mode: **{next_pass['orbit_mode']}** | "
-            f"Swath: **{next_pass['sensor_mode']}** | Dual-Pol: **{next_pass['polarizations']}**"
-        )
+    st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
 
     # -------------------------------------------------------------
     # Metric KPI Row
@@ -660,12 +686,12 @@ def main():
     # Main Tabs
     # -------------------------------------------------------------
     tab_pipeline, tab_images, tab_map, tab_report, tab_drift, tab_analytics = st.tabs([
-        "🚀 SOTA Production Pipeline",
-        "🖼️ Upload & Test SAR Images",
-        "🗺️ Maritime Situation Map",
-        "📋 Forensic Attribution Matrix",
-        "🌊 Hydrodynamic Drift Model",
-        "📊 Vessel Telemetry Profiles"
+        "🚀 Production Pipeline",
+        "🖼️ SAR Image Tester",
+        "🗺️ Maritime Map",
+        "📋 Attribution Matrix",
+        "🌊 Drift Model",
+        "📊 Vessel Telemetry"
     ])
 
     with tab_pipeline:
@@ -677,11 +703,26 @@ def main():
             "AIS Trajectory Attribution Matrix $\\to$ Primary Suspect Photo Dossier.*"
         )
 
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("SAR Sensor Profile", "Sentinel-1 IW GRD", delta="Dual-Pol VV/VH")
-        p2.metric("Segmentation Engine", "U-Net / CFAR Hybrid", delta="BCE + Soft Dice")
-        p3.metric("Hydrodynamic Drift", "NOAA ADIOS Leeway", delta="3.2% Wind + Coriolis")
-        p4.metric("Attribution Matrix", "Bayesian Spatiotemporal", delta="CPA + Physical Causality")
+        st.markdown("""
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px; margin-top:8px;">
+            <div style="background:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; flex:1; min-width:180px;">
+                <span style="font-size:11px; color:#8B949E; text-transform:uppercase; font-weight:600;">SAR Sensor Profile</span><br/>
+                <span style="font-size:13px; font-weight:700; color:#E6EDF3;">Sentinel-1 IW GRD</span> <span style="font-size:11px; color:#00ADB5;">(Dual-Pol VV/VH)</span>
+            </div>
+            <div style="background:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; flex:1; min-width:180px;">
+                <span style="font-size:11px; color:#8B949E; text-transform:uppercase; font-weight:600;">Segmentation Engine</span><br/>
+                <span style="font-size:13px; font-weight:700; color:#E6EDF3;">Deep U-Net / CFAR</span> <span style="font-size:11px; color:#00ADB5;">(Soft Dice + BCE)</span>
+            </div>
+            <div style="background:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; flex:1; min-width:180px;">
+                <span style="font-size:11px; color:#8B949E; text-transform:uppercase; font-weight:600;">Hydrodynamic Drift</span><br/>
+                <span style="font-size:13px; font-weight:700; color:#E6EDF3;">NOAA ADIOS Leeway</span> <span style="font-size:11px; color:#00ADB5;">(3.2% Wind + Coriolis)</span>
+            </div>
+            <div style="background:#161B22; border:1px solid #30363D; border-radius:6px; padding:8px 14px; flex:1; min-width:180px;">
+                <span style="font-size:11px; color:#8B949E; text-transform:uppercase; font-weight:600;">Attribution Matrix</span><br/>
+                <span style="font-size:13px; font-weight:700; color:#E6EDF3;">Bayesian Spatiotemporal</span> <span style="font-size:11px; color:#00ADB5;">(CPA + Causality)</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("---")
         run_pipeline_clicked = st.button("⚡ Execute Full Production Pipeline Now", type="primary", use_container_width=True)
@@ -828,8 +869,9 @@ def main():
             with v_col1:
                 st.markdown("#### 1. Calibrated Sentinel-1 SAR Backscatter (dB)")
                 fig_sar, ax_sar = plt.subplots(figsize=(6, 5))
+                apply_dark_style(fig_sar, ax_sar)
                 ax_sar.imshow(norm_sar.squeeze(), cmap="gray")
-                ax_sar.set_title(f"Normalized SAR Intensity [0, 1]\nAcquisition: {spill_time_str[:16]}")
+                ax_sar.set_title(f"Normalized SAR Intensity [0, 1]\nAcquisition: {spill_time_str[:16]}", color="#FFFFFF")
                 ax_sar.axis("off")
                 fig_sar.tight_layout()
                 st.pyplot(fig_sar)
@@ -837,9 +879,10 @@ def main():
             with v_col2:
                 st.markdown("#### 2. Deep Learning / CFAR Slick Probability Heatmap")
                 fig_seg, ax_seg = plt.subplots(figsize=(6, 5))
+                apply_dark_style(fig_seg, ax_seg)
                 ax_seg.imshow(norm_sar.squeeze(), cmap="gray")
                 ax_seg.imshow(seg_out["probability_map"], cmap="hot", alpha=0.6)
-                ax_seg.set_title(f"Slick Footprint (Area: {seg_out['slick_area_km2']:.2f} km²)")
+                ax_seg.set_title(f"Slick Footprint (Area: {seg_out['slick_area_km2']:.2f} km²)", color="#FFFFFF")
                 ax_seg.axis("off")
                 fig_seg.tight_layout()
                 st.pyplot(fig_seg)
@@ -1037,7 +1080,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
 
         if sar_test_image is not None:
             st.markdown("---")
-            ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([1, 1, 1])
+            ctrl_c1, ctrl_c2 = st.columns(2)
             with ctrl_c1:
                 cutoff_thresh = st.slider("Detection Confidence Threshold", 0.20, 0.85, 0.50, 0.05, key="audit_cutoff")
             with ctrl_c2:
@@ -1046,10 +1089,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                     ["EMSA CleanSeaNet CFAR (Adaptive Multi-Scale)", "Auto-Detect Hybrid", "PyTorch Deep U-Net"],
                     key="audit_engine"
                 )
-            with ctrl_c3:
-                st.write("")
-                st.write("")
-                execute_audit = st.button("⚡ Execute AI Diagnostic Audit Now", type="primary", use_container_width=True)
+            execute_audit = st.button("⚡ Execute AI Diagnostic Audit Now", type="primary", use_container_width=True)
 
             audit_key = f"audit_res_{img_title}_{cutoff_thresh}_{engine_select}"
             if execute_audit or audit_key in st.session_state:
@@ -1114,6 +1154,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                 # 4-Panel Visualization
                 st.markdown("#### 🔬 Multi-Panel SAR Diagnostic Visualizations")
                 fig_diag, ((d_ax1, d_ax2), (d_ax3, d_ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+                apply_dark_style(fig_diag, [d_ax1, d_ax2, d_ax3, d_ax4])
 
                 # 1. Ingested SAR Scene
                 d_ax1.imshow(sar_img, cmap="gray")
@@ -1202,7 +1243,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
                 center=map_center,
                 zoom=map_zoom
             )
-            st_folium(m, width="100%", height=620, returned_objects=[])
+            st_folium(m, use_container_width=True, height=600, returned_objects=[])
         else:
             html = render_leaflet_html_fallback(
                 spill_coords=spill_coords,
@@ -1269,6 +1310,7 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
         st.markdown("### Multi-Vessel Speed & Heading Telemetry")
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+        apply_dark_style(fig, [ax1, ax2])
 
         # Standardize timestamps for matplotlib unit conversion
         ais_df_plot = ais_df.copy()
