@@ -419,70 +419,65 @@ def main():
     )
 
     # -------------------------------------------------------------
-    # Sidebar: Case Study & Surveillance Selector
+    # Sidebar: Unified Incident Feed & Operational Surveillance
     # -------------------------------------------------------------
-    st.sidebar.header("📁 Operational Surveillance Mode")
-    case_mode = st.sidebar.radio(
-        "Select Live Stream / Benchmark Incident:",
-        [
-            "🔴 LIVE Real-Time Surveillance & Active NOAA Spills",
-            "🌊 Historical Benchmark 1: MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
-            "🚢 Historical Benchmark 2: Strait of Gibraltar Marine Highway Corridor",
-            "📂 Custom AIS Upload (NOAA Marine Cadastre / DMA)",
-            "🛰️ Live Sentinel-1 STAC Catalog Search"
-        ]
-    )
+    st.sidebar.header("📁 Operational Surveillance Feeds")
 
-    # Mode 0: LIVE Marine Spill Surveillance & NOAA Emergency Feed
-    if "LIVE" in case_mode:
-        if st.sidebar.button("🔄 Sync Live Telemetry (Refresh Now)"):
-            st.rerun()
+    live_spills = LiveSpillMonitorService.get_live_spills()
+    feed_options = [
+        f"🔴 [{s.get('threat_level', 'ACTIVE')}] {s.get('name', 'Marine Spill')} (Live NOAA Feed)"
+        for s in live_spills
+    ] + [
+        "🌊 Historical Benchmark 1: MV Wakashio Disaster (Mauritius, Aug 2020) — Copernicus EMSR449",
+        "🚢 Historical Benchmark 2: Strait of Gibraltar Marine Highway Corridor"
+    ]
 
-        live_spills = LiveSpillMonitorService.get_live_spills()
-        spill_names = [
-            f"🔴 [{s.get('threat_level', 'ACTIVE')}] {s.get('name', 'Marine Spill')} (Reported {s.get('elapsed_str', 'Recently')})"
-            for s in live_spills
-        ]
-        selected_label = st.sidebar.selectbox("Active Spill Emergency Feed:", spill_names)
-        selected_idx = spill_names.index(selected_label)
-        selected_spill = live_spills[selected_idx]
+    selected_feed = st.sidebar.selectbox("Select Active Surveillance Incident:", feed_options, index=0)
 
-        incident_name = f"🔴 LIVE EMERGENCY: {selected_spill.get('name', 'Marine Spill')}"
-        incident_badge = f"{selected_spill.get('threat_level', 'ACTIVE')} THREAT | Status: {selected_spill.get('status', 'Active')} | Reported {selected_spill.get('elapsed_str', 'Recently')}"
-        incident_desc = (
-            f"**Location:** {selected_spill.get('location', 'Coastal Waters')} | **Commodity:** {selected_spill.get('commodity', 'Petroleum')} | "
-            f"**Estimated Volume:** {selected_spill.get('estimated_spill_volume', 'Assessing')} | **Lead Agency:** {selected_spill.get('lead_agency', 'Coast Guard')}"
-        )
+    if st.sidebar.button("🔄 Sync Live Telemetry (Refresh Now)", use_container_width=True):
+        st.rerun()
 
-        c_lat, c_lon = selected_spill["latitude"], selected_spill["longitude"]
-        map_center = [c_lat, c_lon]
-        map_zoom = 12
-        spill_time_str = selected_spill["reported_time_utc"]
+    # Optional Custom AIS Telemetry Ingestion
+    custom_ais_df = None
+    with st.sidebar.expander("📂 Ingest Custom AIS Telemetry (CSV)", expanded=False):
+        st.caption("Upload multi-column AIS CSV (NOAA Marine Cadastre, DMA, or generic).")
+        uploaded_ais = st.file_uploader("Upload AIS CSV", type=["csv"], key="sidebar_ais_uploader")
+        if uploaded_ais is not None:
+            try:
+                raw_df = pd.read_csv(uploaded_ais)
+                custom_ais_df = UniversalAISLoader.load(raw_df)
+                st.success(f"Loaded {len(custom_ais_df)} pings across {custom_ais_df['mmsi'].nunique()} vessels!")
+            except Exception as e:
+                st.error(f"Error parsing AIS CSV: {e}")
 
-        # Synthetic localized slick polygon around the reported casualty
-        d_size = 0.015
-        spill_coords = [
-            [c_lon - d_size * 0.8, c_lat - d_size * 0.3],
-            [c_lon + d_size * 0.2, c_lat + d_size * 0.7],
-            [c_lon + d_size * 1.1, c_lat + d_size * 0.5],
-            [c_lon + d_size * 0.9, c_lat - d_size * 0.4],
-            [c_lon - d_size * 0.2, c_lat - d_size * 0.8],
-            [c_lon - d_size * 0.8, c_lat - d_size * 0.3]
-        ]
-        sar_bounds = [c_lon - 0.25, c_lat - 0.25, c_lon + 0.25, c_lat + 0.25]
+    # Optional Live Sentinel-1 STAC Catalog Query
+    with st.sidebar.expander("🛰️ Query Live Sentinel-1 STAC Catalog", expanded=False):
+        st.caption("Search real ESA Sentinel-1 SAR scenes from AWS / Planetary Computer.")
+        stac_reg = st.selectbox("Region:", [
+            "Mauritius Island (MV Wakashio Site)",
+            "Strait of Gibraltar (Mediterranean Gateway)",
+            "Singapore Strait (Malacca Chokepoint)",
+            "Persian Gulf / Strait of Hormuz",
+            "North Sea (Dogger Bank)"
+        ], key="stac_reg_sb")
+        region_bboxes = {
+            "Mauritius Island (MV Wakashio Site)": [57.12, -20.85, 58.05, -19.95],
+            "Strait of Gibraltar (Mediterranean Gateway)": [-5.80, 35.80, -4.60, 36.60],
+            "Singapore Strait (Malacca Chokepoint)": [103.50, 1.10, 104.20, 1.50],
+            "Persian Gulf / Strait of Hormuz": [55.50, 25.50, 57.00, 27.00],
+            "North Sea (Dogger Bank)": [1.50, 54.00, 3.50, 56.00]
+        }
+        stac_client = Sentinel1STACClient()
+        if st.button("🔍 Search Scenes", key="stac_search_btn", use_container_width=True):
+            with st.spinner("Querying STAC metadata catalog..."):
+                scenes = stac_client.search_scenes(bbox=tuple(region_bboxes[stac_reg]), start_date="2020-01-01", end_date="2024-12-31")
+                st.success(f"Found {len(scenes)} matching scenes!")
+                for s in scenes[:3]:
+                    st.caption(f"🛰️ {s['platform']} | {s['datetime'][:10]} | ID: {s['id'][:30]}...")
 
-        # Live Radar AIS Telemetry (Ending at current minute of today)
-        ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6)
-
-        # Orbital overpass schedule
-        next_pass = LiveSpillMonitorService.compute_next_sentinel1_pass(c_lat, c_lon)
-        default_wind_spd = 14.0
-        default_wind_dir = 110.0
-        default_curr_spd = 0.35
-        default_curr_dir = 290.0
-
-    # Mode 1: MV Wakashio Disaster
-    elif "Wakashio" in case_mode:
+    # Resolve active incident parameters
+    is_live = False
+    if "Wakashio" in selected_feed:
         preset = INCIDENT_PRESETS["wakashio"]
         ais_path = preset["ais_path"]
         spill_coords = load_incident_spill_polygon(preset["geojson_path"])
@@ -498,9 +493,9 @@ def main():
         default_wind_dir = preset["default_wind_dir"]
         default_curr_spd = preset["default_curr_speed"]
         default_curr_dir = preset["default_curr_dir"]
+        ais_df = custom_ais_df if custom_ais_df is not None else UniversalAISLoader.load(ais_path)
 
-    # Mode 2: Gibraltar TSS Highway
-    elif "Gibraltar" in case_mode:
+    elif "Gibraltar" in selected_feed:
         preset = INCIDENT_PRESETS["gibraltar"]
         ais_path = preset["ais_path"]
         spill_coords = load_incident_spill_polygon(preset["geojson_path"])
@@ -516,76 +511,51 @@ def main():
         default_wind_dir = preset["default_wind_dir"]
         default_curr_spd = preset["default_curr_speed"]
         default_curr_dir = preset["default_curr_dir"]
+        ais_df = custom_ais_df if custom_ais_df is not None else UniversalAISLoader.load(ais_path)
 
-    # Mode 3: Custom AIS Upload
-    elif "Custom" in case_mode:
-        incident_name = "Custom Real-World AIS Incident Investigation"
-        incident_badge = "User Data Ingestion"
-        incident_desc = "Upload raw multi-column AIS CSV data (NOAA Marine Cadastre, Danish Maritime Authority, or generic)."
-        spill_coords = [[-5.165, 36.215], [-5.150, 36.228], [-5.120, 36.235], [-5.110, 36.225], [-5.130, 36.212]]
-        sar_bounds = [-5.50, 36.00, -4.80, 36.50]
-        spill_time_str = "2024-05-15T06:30:00Z"
-        map_center = [36.225, -5.137]
-        map_zoom = 11
-        default_wind_spd, default_wind_dir = 10.0, 90.0
-        default_curr_spd, default_curr_dir = 0.25, 270.0
-
-        uploaded_file = st.sidebar.file_uploader("Upload AIS CSV", type=["csv"])
-        if uploaded_file is not None:
-            raw_df = pd.read_csv(uploaded_file)
-            ais_df = UniversalAISLoader.load(raw_df)
-        else:
-            ais_df = UniversalAISLoader.load("data/real_world/gibraltar_strait/real_ais_telemetry.csv")
-
-    # Mode 4: STAC Query
     else:
-        st.subheader("🛰️ Live Sentinel-1 SAR STAC Catalog Query (Planetary Computer / AWS)")
-        st.markdown(
-            "Query real ESA Sentinel-1 Synthetic Aperture Radar (SAR) Ground Range Detected (GRD) scenes "
-            "directly from open cloud catalogs for any maritime region on Earth."
+        is_live = True
+        matching_spill = None
+        for s in live_spills:
+            if s.get("name", "") in selected_feed:
+                matching_spill = s
+                break
+        if matching_spill is None:
+            matching_spill = live_spills[0]
+
+        incident_name = f"🔴 LIVE EMERGENCY: {matching_spill.get('name', 'Marine Spill')}"
+        incident_badge = f"{matching_spill.get('threat_level', 'ACTIVE')} THREAT | Status: {matching_spill.get('status', 'Active')} | Reported {matching_spill.get('elapsed_str', 'Recently')}"
+        incident_desc = (
+            f"**Location:** {matching_spill.get('location', 'Coastal Waters')} | **Commodity:** {matching_spill.get('commodity', 'Petroleum')} | "
+            f"**Estimated Volume:** {matching_spill.get('estimated_spill_volume', 'Assessing')} | **Lead Agency:** {matching_spill.get('lead_agency', 'Coast Guard')}"
         )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            region_choice = st.selectbox(
-                "Preset Maritime Region:",
-                [
-                    "Mauritius Island (MV Wakashio Site)",
-                    "Strait of Gibraltar (Mediterranean Gateway)",
-                    "Singapore Strait (Malacca Chokepoint)",
-                    "Persian Gulf / Strait of Hormuz",
-                    "North Sea (Dogger Bank)"
-                ]
-            )
-            region_bboxes = {
-                "Mauritius Island (MV Wakashio Site)": [57.12, -20.85, 58.05, -19.95],
-                "Strait of Gibraltar (Mediterranean Gateway)": [-5.80, 35.80, -4.60, 36.60],
-                "Singapore Strait (Malacca Chokepoint)": [103.50, 1.10, 104.20, 1.50],
-                "Persian Gulf / Strait of Hormuz": [55.50, 25.50, 57.00, 27.00],
-                "North Sea (Dogger Bank)": [1.50, 54.00, 3.50, 56.00]
-            }
-            search_bbox = region_bboxes[region_choice]
+        c_lat, c_lon = matching_spill["latitude"], matching_spill["longitude"]
+        map_center = [c_lat, c_lon]
+        map_zoom = 12
+        spill_time_str = matching_spill["reported_time_utc"]
 
-        with c2:
-            date_col1, date_col2 = st.columns(2)
-            with date_col1:
-                start_d = st.text_input("Start Date [YYYY-MM-DD]", value="2020-08-01" if "Mauritius" in region_choice else "2024-05-01")
-            with date_col2:
-                end_d = st.text_input("End Date [YYYY-MM-DD]", value="2020-08-15" if "Mauritius" in region_choice else "2024-05-31")
+        d_size = 0.015
+        spill_coords = [
+            [c_lon - d_size * 0.8, c_lat - d_size * 0.3],
+            [c_lon + d_size * 0.2, c_lat + d_size * 0.7],
+            [c_lon + d_size * 1.1, c_lat + d_size * 0.5],
+            [c_lon + d_size * 0.9, c_lat - d_size * 0.4],
+            [c_lon - d_size * 0.2, c_lat - d_size * 0.8],
+            [c_lon - d_size * 0.8, c_lat - d_size * 0.3]
+        ]
+        sar_bounds = [c_lon - 0.25, c_lat - 0.25, c_lon + 0.25, c_lat + 0.25]
 
-        stac_client = Sentinel1STACClient()
-        if st.button("🔍 Search Satellite Catalog"):
-            with st.spinner("Querying open STAC metadata catalog..."):
-                scenes = stac_client.search_scenes(bbox=tuple(search_bbox), start_date=start_d, end_date=end_d)
-                st.success(f"Found {len(scenes)} matching Sentinel-1 SAR acquisition scenes!")
-                for s in scenes:
-                    with st.expander(f"🛰️ {s['platform']} | Scene ID: {s['id'][:45]}... | {s['datetime']}"):
-                        st.json(s)
-        st.stop()
+        if custom_ais_df is not None:
+            ais_df = custom_ais_df
+        else:
+            ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6)
 
-    # Ingest AIS Data if not custom uploaded and not live radar stream
-    if "Custom" not in case_mode and "LIVE" not in case_mode:
-        ais_df = UniversalAISLoader.load(ais_path)
+        next_pass = LiveSpillMonitorService.compute_next_sentinel1_pass(c_lat, c_lon)
+        default_wind_spd = 14.0
+        default_wind_dir = 110.0
+        default_curr_spd = 0.35
+        default_curr_dir = 290.0
 
     # -------------------------------------------------------------
     # Sidebar: Investigation Controls
@@ -639,7 +609,7 @@ def main():
     # -------------------------------------------------------------
     # Case Study Overview Banner
     # -------------------------------------------------------------
-    if "LIVE" in case_mode:
+    if is_live:
         now_utc = datetime.now(timezone.utc)
         st.markdown(
             f'<div style="background-color:#0D2128; border:1px solid #00ADB5; padding:8px 14px; border-radius:6px; margin-bottom:12px; font-size:13px; color:#E0F7FA;">'
@@ -654,7 +624,7 @@ def main():
     st.subheader(incident_name)
     st.markdown(f"*{incident_desc}*")
 
-    if "LIVE" in case_mode and 'next_pass' in locals():
+    if is_live and 'next_pass' in locals():
         st.info(
             f"🛰️ **Sentinel-1 Constellation Live Orbital Schedule:** "
             f"Next SAR overpass over this marine sector in **{next_pass['countdown_hours']} hours** "
@@ -689,10 +659,11 @@ def main():
     # -------------------------------------------------------------
     # Main Tabs
     # -------------------------------------------------------------
-    tab_pipeline, tab_map, tab_report, tab_drift, tab_analytics = st.tabs([
-        "🚀 SOTA Production Pipeline (Cerulean SOTA Engine)",
+    tab_pipeline, tab_images, tab_map, tab_report, tab_drift, tab_analytics = st.tabs([
+        "🚀 SOTA Production Pipeline",
+        "🖼️ Upload & Test SAR Images",
         "🗺️ Maritime Situation Map",
-        "📋 Forensic Attribution Report",
+        "📋 Forensic Attribution Matrix",
         "🌊 Hydrodynamic Drift Model",
         "📊 Vessel Telemetry Profiles"
     ])
@@ -907,6 +878,253 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
         else:
             st.info("💡 Click **'Execute Full Production Pipeline Now'** above to run automated SAR calibration, segmentation, drift modeling, and suspect attribution.")
 
+    with tab_images:
+        st.markdown("### 🖼️ Interactive SAR Image Ingestion & Anomaly Detection Module")
+        st.markdown(
+            "**Validate the AI Pipeline with Real or Custom SAR Imagery:**  \n"
+            "*Upload your own satellite GeoTIFF, radar patch, or ocean photo to test the system, or choose from our curated benchmark test gallery.*"
+        )
+
+        col_src1, col_src2 = st.columns([1, 1])
+        with col_src1:
+            img_source = st.radio(
+                "Select Image Input Mode:",
+                ["🧪 Curated Benchmark Test Gallery", "📂 Upload Custom Satellite / Drone Image"],
+                horizontal=True,
+                key="tab_img_source_radio"
+            )
+
+        sar_test_image = None
+        img_title = "SAR Radar Scene"
+
+        if "Benchmark" in img_source:
+            sample_options = {
+                "1. 🛰️ Confirmed Real Oil Spill (Heavy Petroleum Slick)": {
+                    "file": "sample_1_real_oil_spill.npy",
+                    "desc": "High-contrast capillary damping (-14.1 dB) with trailing hydrocarbon slick and nearby vessel return.",
+                    "type": "Real Spill"
+                },
+                "2. 🌊 Low-Wind Zone Look-Alike (Calm Sea Surface)": {
+                    "file": "sample_2_low_wind_lookalike.npy",
+                    "desc": "Low-wind calm sea patch (<3 m/s) with diffuse boundaries and weak capillary damping (-7.9 dB).",
+                    "type": "Look-Alike"
+                },
+                "3. 🌱 Biogenic Surfactant / Algal Film (Organic Slick)": {
+                    "file": "sample_3_biogenic_algae_lookalike.npy",
+                    "desc": "Thin organic monomolecular film forming elongated fibrous filaments with moderate damping (-7.7 dB).",
+                    "type": "Look-Alike"
+                },
+                "4. 🚢 Clean Open Ocean with Vessel Echoes (No Spill)": {
+                    "file": "sample_4_clean_ocean_with_ships.npy",
+                    "desc": "Homogeneous wind-driven sea clutter with multiple steel ship radar scatterers and zero oil pollution.",
+                    "type": "Clean Ocean"
+                },
+                "5. 🌊 MV Wakashio Disaster Marine Casualty (Mauritius)": {
+                    "file": "sample_5_wakashio_disaster.npy",
+                    "desc": "Grounded bulk carrier casualty releasing heavy fuel oil into coastal lagoon with -13.5 dB contrast.",
+                    "type": "Real Spill"
+                }
+            }
+
+            sel_sample = st.selectbox("Choose Benchmark Test Image:", list(sample_options.keys()), key="sel_benchmark_sample")
+            meta = sample_options[sel_sample]
+            img_path = os.path.join("data", "test_samples", meta["file"])
+
+            if not os.path.exists(img_path):
+                from create_test_samples import generate_samples
+                generate_samples()
+
+            sar_test_image = np.load(img_path)
+            img_title = sel_sample.split("(")[0].strip()
+            st.info(f"**Benchmark Scene Profile:** {meta['desc']}")
+
+        else:
+            uploaded_sar = st.file_uploader(
+                "Upload SAR Scene / GeoTIFF / Ocean Photo (.png, .jpg, .jpeg, .tif, .tiff, .npy)",
+                type=["png", "jpg", "jpeg", "tif", "tiff", "npy"],
+                key="tab_sar_file_uploader"
+            )
+            if uploaded_sar is not None:
+                fname = uploaded_sar.name.lower()
+                try:
+                    if fname.endswith(".npy"):
+                        loaded = np.load(uploaded_sar)
+                        if loaded.ndim == 3:
+                            loaded = loaded[0]
+                        sar_test_image = loaded
+                    elif fname.endswith((".tif", ".tiff")):
+                        try:
+                            import tifffile
+                            sar_test_image = tifffile.imread(uploaded_sar).astype(np.float32)
+                        except Exception:
+                            from PIL import Image
+                            pil_im = Image.open(uploaded_sar).convert("L")
+                            sar_test_image = np.array(pil_im, dtype=np.float32)
+                    else:
+                        from PIL import Image
+                        pil_im = Image.open(uploaded_sar).convert("L")
+                        sar_test_image = np.array(pil_im, dtype=np.float32)
+
+                    # Normalize array to [0, 1]
+                    if sar_test_image is not None:
+                        if sar_test_image.ndim == 3:
+                            sar_test_image = sar_test_image[0]
+                        p1, p99 = np.percentile(sar_test_image, (1.0, 99.0))
+                        sar_test_image = np.clip((sar_test_image - p1) / max(p99 - p1, 1e-5), 0.0, 1.0)
+                        img_title = f"Uploaded: {uploaded_sar.name}"
+                        st.success(f"✅ Successfully ingested image: `{uploaded_sar.name}` ({sar_test_image.shape[0]}x{sar_test_image.shape[1]} px)")
+                except Exception as e:
+                    st.error(f"Error parsing uploaded image: {e}")
+            else:
+                st.info("👆 Upload an image above or switch to the Benchmark Test Gallery to test the system.")
+
+        if sar_test_image is not None:
+            st.markdown("---")
+            ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([1, 1, 1])
+            with ctrl_c1:
+                cutoff_thresh = st.slider("Detection Confidence Threshold", 0.20, 0.85, 0.50, 0.05, key="audit_cutoff")
+            with ctrl_c2:
+                engine_select = st.selectbox(
+                    "Segmentation Engine:",
+                    ["EMSA CleanSeaNet CFAR (Adaptive Multi-Scale)", "Auto-Detect Hybrid", "PyTorch Deep U-Net"],
+                    key="audit_engine"
+                )
+            with ctrl_c3:
+                st.write("")
+                st.write("")
+                execute_audit = st.button("⚡ Execute AI Diagnostic Audit Now", type="primary", use_container_width=True)
+
+            audit_key = f"audit_res_{img_title}_{cutoff_thresh}_{engine_select}"
+            if execute_audit or audit_key in st.session_state:
+                if execute_audit or audit_key not in st.session_state:
+                    with st.spinner("Executing Radiometric Calibration, Dark-Spot Segmentation, and Anomaly Classification..."):
+                        seg_engine = OilSpillSegmenter(detection_threshold=cutoff_thresh)
+                        seg_audit = seg_engine.segment_sar_image(sar_test_image)
+
+                        # Detect metallic point scatterers (vessels)
+                        import scipy.ndimage as ndimage
+                        smooth_bg = ndimage.gaussian_filter(sar_test_image, sigma=15.0)
+                        vessel_pts = (sar_test_image > 0.80) & (sar_test_image > (smooth_bg + 0.25))
+                        num_vessels = int(np.sum(vessel_pts))
+
+                        st.session_state[audit_key] = {
+                            "seg_audit": seg_audit,
+                            "num_vessels": num_vessels,
+                            "sar_img": sar_test_image
+                        }
+
+                audit_data = st.session_state[audit_key]
+                seg_audit = audit_data["seg_audit"]
+                num_vessels = audit_data["num_vessels"]
+                sar_img = audit_data["sar_img"]
+
+                slick_px = seg_audit["slick_pixels"]
+                slick_area = seg_audit["slick_area_km2"]
+                damping_db = seg_audit["damping_contrast_db"]
+                mean_conf = seg_audit["mean_confidence"]
+
+                # Expert Classification Verdict
+                if slick_px < 50 or slick_area < 0.05:
+                    v_class = "CLEAN"
+                    v_title = "🟢 CLEAN SEA SURFACE — NO OIL SPILL DETECTED"
+                    v_badge_color = "#00C853"
+                    v_explanation = "The radar backscatter exhibits homogeneous wind-driven sea clutter. Zero capillary damping anomalies were detected."
+                elif damping_db >= 8.0 and mean_conf >= 0.70:
+                    v_class = "REAL_SPILL"
+                    v_title = "🚨 CONFIRMED REAL OIL SPILL DETECTED"
+                    v_badge_color = "#FF0055"
+                    v_explanation = f"High-confidence petroleum hydrocarbon slick. Capillary wave suppression contrast is strong (-{damping_db:.1f} dB) with cohesive morphological structure."
+                else:
+                    v_class = "LOOK_ALIKE"
+                    v_title = "⚠️ NATURAL LOOK-ALIKE ANOMALY DETECTED"
+                    v_badge_color = "#FF9100"
+                    v_explanation = f"Moderate damping contrast (-{damping_db:.1f} dB) and confidence ({mean_conf*100:.1f}%). Consistent with a low-wind calm sea zone, biogenic algal bloom, or internal wave pattern."
+
+                st.markdown(f"""
+                <div style="background-color:#161B22; border-left:6px solid {v_badge_color}; padding:14px 18px; border-radius:6px; margin-top:15px; margin-bottom:20px;">
+                    <h3 style="color:{v_badge_color}; margin:0 0 6px 0;">{v_title}</h3>
+                    <p style="margin:0; font-size:14px; color:#E6EDF3;">{v_explanation}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Metric Cards
+                am1, am2, am3, am4 = st.columns(4)
+                am1.metric("Detected Slick Footprint", f"{slick_area:.2f} km²", delta=f"{slick_px:,} pixels")
+                am2.metric("Capillary Damping Contrast", f"-{damping_db:.1f} dB", delta="Wave suppression")
+                am3.metric("Mean Detection Confidence", f"{mean_conf*100:.1f}%", delta="Model Certainty")
+                am4.metric("Metallic Vessel Scatterers", f"{num_vessels} detected", delta="CFAR Targets")
+
+                # 4-Panel Visualization
+                st.markdown("#### 🔬 Multi-Panel SAR Diagnostic Visualizations")
+                fig_diag, ((d_ax1, d_ax2), (d_ax3, d_ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+
+                # 1. Ingested SAR Scene
+                d_ax1.imshow(sar_img, cmap="gray")
+                d_ax1.set_title("1. Ingested Sentinel-1 SAR Backscatter (Normalized)", fontsize=11, fontweight="bold")
+                d_ax1.axis("off")
+
+                # 2. Calibrated Decibel Dynamic Range
+                db_map = 10.0 * np.log10(np.maximum(sar_img, 1e-4))
+                im2 = d_ax2.imshow(db_map, cmap="cividis")
+                d_ax2.set_title("2. Radiometric Decibel Calibration Map (σ⁰ dB)", fontsize=11, fontweight="bold")
+                d_ax2.axis("off")
+                fig_diag.colorbar(im2, ax=d_ax2, fraction=0.046, pad=0.04, label="dB")
+
+                # 3. Probability Heatmap
+                d_ax3.imshow(sar_img, cmap="gray")
+                im3 = d_ax3.imshow(seg_audit["probability_map"], cmap="hot", alpha=0.65)
+                d_ax3.set_title(f"3. AI Slick Probability Heatmap ({seg_audit['engine']})", fontsize=11, fontweight="bold")
+                d_ax3.axis("off")
+                fig_diag.colorbar(im3, ax=d_ax3, fraction=0.046, pad=0.04, label="P(Slick)")
+
+                # 4. Binary Semantic Mask Overlay
+                d_ax4.imshow(sar_img, cmap="gray")
+                mask_display = np.ma.masked_where(seg_audit["binary_mask"] == 0, seg_audit["binary_mask"])
+                cmap_mask = "Reds" if v_class == "REAL_SPILL" else ("Oranges" if v_class == "LOOK_ALIKE" else "Greens")
+                d_ax4.imshow(mask_display, cmap=cmap_mask, alpha=0.75)
+                d_ax4.set_title(f"4. Segmented Boundary Mask ({v_class})", fontsize=11, fontweight="bold")
+                d_ax4.axis("off")
+
+                fig_diag.tight_layout()
+                st.pyplot(fig_diag)
+
+                # Export Artifacts
+                st.markdown("##### 📥 Export Diagnostic Verification Artifacts")
+                ea1, ea2 = st.columns(2)
+                with ea1:
+                    audit_json = {
+                        "image_title": img_title,
+                        "verdict": v_class,
+                        "classification": v_title,
+                        "slick_area_km2": slick_area,
+                        "slick_pixels": slick_px,
+                        "damping_contrast_db": damping_db,
+                        "mean_confidence": mean_conf,
+                        "vessel_scatterers": num_vessels,
+                        "engine": seg_audit["engine"],
+                        "threshold": cutoff_thresh
+                    }
+                    st.download_button(
+                        label="📄 Download Diagnostic Report (JSON)",
+                        data=json.dumps(audit_json, indent=2).encode("utf-8"),
+                        file_name=f"diagnostic_report_{v_class.lower()}.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
+                with ea2:
+                    from io import BytesIO
+                    from PIL import Image as PILImage
+                    mask_im = PILImage.fromarray((seg_audit["binary_mask"] * 255).astype(np.uint8))
+                    buf = BytesIO()
+                    mask_im.save(buf, format="PNG")
+                    st.download_button(
+                        label="🗺️ Download Binary Mask (PNG)",
+                        data=buf.getvalue(),
+                        file_name=f"spill_mask_{v_class.lower()}.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+
     with tab_map:
         st.caption(
             "🔴 **Red Polygon**: Satellite-delineated oil spill | "
@@ -941,49 +1159,16 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
             st.components.v1.html(html, height=640)
 
     with tab_report:
-        st.markdown("### Suspect Vessel Attribution Rankings")
+        st.markdown("### 📋 Multi-Vessel Forensic Attribution Matrix")
 
         if ranked_suspects.empty:
             st.warning(f"No vessels detected within the {threshold_km} km search radius.")
         else:
-            top = ranked_suspects.iloc[0]
-            vessel_img = VesselImageAPI.get_vessel_details(
-                mmsi=int(top["mmsi"]),
-                imo=int(top.get("imo", 0)) if pd.notna(top.get("imo")) else 0,
-                name=str(top.get("vessel_name", ""))
+            st.markdown(
+                "**Comprehensive Candidate Investigation Matrix:** "
+                "Candidate vessels ranked by Spatio-Temporal Closest Point of Approach (CPA), "
+                "Temporal Offset ($\\Delta t$), and Physical Causality Compliance."
             )
-
-            # High-Impact Primary Suspect Dossier Card
-            st.markdown(f"""
-            <div class="suspect-card-rank1">
-                <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Vessel Identified: {vessel_img.get('vessel_name', 'MMSI ' + str(int(top['mmsi'])))}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-
-            card_col1, card_col2 = st.columns([1, 2])
-            with card_col1:
-                st.image(
-                    vessel_img["image_url"],
-                    caption=f"{vessel_img['caption']}\n(Source: {vessel_img['photo_attribution']})",
-                    width="stretch"
-                )
-                if "external_photo_link" in vessel_img:
-                    st.markdown(f"[🔗 View MarineTraffic Live Photo Gallery]({vessel_img['external_photo_link']})")
-                else:
-                    st.markdown(f"[🔗 MarineTraffic Ship Profile](https://www.marinetraffic.com/en/ais/details/ships/mmsi:{int(top['mmsi'])})")
-
-            with card_col2:
-                st.markdown(f"""
-                - **Attribution Confidence Score:** <span style="font-size:20px; font-weight:700; color:#00ADB5;">{top['attribution_score']:.4f} / 1.0000</span>
-                - **Flag State:** {vessel_img.get('flag', 'International 🌐')} | **IMO:** `{vessel_img.get('imo', top.get('imo', 'N/A'))}` | **MMSI:** `{int(top['mmsi'])}`
-                - **Vessel Classification:** {vessel_img.get('vessel_type', top.get('vessel_type', 'N/A'))}
-                - **Dimensions (LOA x Beam):** {vessel_img.get('length_beam', 'N/A')} | **Year Built:** {vessel_img.get('built_year', 'N/A')}
-                - **Fleet Operator:** {vessel_img.get('owner', 'Commercial Fleet')}
-                - **Point of Closest Approach:** **{top['closest_distance_km']:.3f} km** from observed spill perimeter
-                - **Temporal Offset:** **{top['time_delta_hours']:+.2f} hours** from satellite SAR acquisition
-                - **Speed & Heading:** **{top['closest_speed_knots']:.1f} knots** at **{top['closest_course_deg']:.0f}°**
-                - **Physical Causality Verified:** {'✅ Valid (Vessel present prior to or during satellite observation)' if top['is_causally_valid'] else '❌ Non-causal'}
-                """, unsafe_allow_html=True)
 
             # Clean dataframe for display
             disp_df = ranked_suspects.copy()
@@ -994,10 +1179,11 @@ Sentinel-1 SAR C-band observation detected a contiguous marine slick anomaly cov
 
             csv_data = disp_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Export Forensic Attribution Report CSV",
+                label="📥 Export Forensic Attribution Matrix (CSV)",
                 data=csv_data,
-                file_name=f"attribution_report_{case_mode[:8]}.csv",
-                mime="text/csv"
+                file_name=f"attribution_matrix_{incident_name[:12].replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True
             )
 
     with tab_drift:

@@ -182,23 +182,33 @@ class OilSpillSegmenter:
         h, w = sar_2d.shape
 
         if HAS_SCIPY:
-            # Multi-scale Gaussian background estimate (simulating sea clutter)
-            background_mean = ndimage.gaussian_filter(sar_2d, sigma=15.0)
-            sq_diff = (sar_2d - background_mean) ** 2
-            background_var = ndimage.gaussian_filter(sq_diff, sigma=15.0)
-            background_std = np.sqrt(np.maximum(background_var, 1e-5))
-
-            # Damping contrast (dark spots have positive contrast below ambient sea)
-            damping = background_mean - sar_2d
-
-            # Local SNR / contrast ratio
-            snr = damping / (background_std + 1e-4)
-
-            # Sigmoid activation mapping SNR to slick probability [0, 1]
-            prob = 1.0 / (1.0 + np.exp(-1.8 * (snr - 1.2)))
-
+            # Multi-scale filter: smooth speckle noise with small sigma=2.0
+            smooth = ndimage.gaussian_filter(sar_2d, sigma=2.0)
+            
+            # Regional sea clutter estimate (macro scale)
+            bg_median = float(np.median(smooth))
+            bg_std = float(np.std(smooth))
+            
+            # Local background estimate
+            local_bg = ndimage.gaussian_filter(sar_2d, sigma=30.0)
+            local_diff = (sar_2d - local_bg) ** 2
+            local_std = np.sqrt(np.maximum(ndimage.gaussian_filter(local_diff, sigma=30.0), 1e-5))
+            
+            # Damping relative to sea baseline
+            damping_macro = bg_median - smooth
+            damping_local = local_bg - smooth
+            damping = 0.6 * damping_macro + 0.4 * damping_local
+            
+            # Standardized anomaly ratio
+            eff_std = 0.5 * bg_std + 0.5 * local_std
+            snr = damping / np.maximum(eff_std, 1e-4)
+            
+            # Sigmoid activation mapping SNR to probability
+            # SOG/CFAR threshold: significant damping anomaly at snr >= 1.35
+            prob = 1.0 / (1.0 + np.exp(-2.2 * (snr - 1.35)))
+            
             # Suppress high-backscatter metallic targets (ships)
-            bright_vessels = sar_2d > (background_mean + 2.0 * background_std)
+            bright_vessels = sar_2d > (local_bg + 2.0 * local_std)
             prob[bright_vessels] = 0.0
 
             # Suppress scene borders
