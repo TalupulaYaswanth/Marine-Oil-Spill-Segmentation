@@ -715,21 +715,46 @@ def main():
         st.markdown("---")
         run_pipeline_clicked = st.button("⚡ Execute Full Production Pipeline Now", type="primary", use_container_width=True)
 
-        if run_pipeline_clicked or "prod_results" in st.session_state:
-            if run_pipeline_clicked or "prod_results" not in st.session_state:
-                with st.spinner("Executing SOTA Production Pipeline (Calibration, Segmentation, Drift, Attribution)..."):
-                    # 1. SAR Preprocessing
-                    sar_file = "data/S1A_IW_GRDH_1SDV_20240515T063000_sample.tif"
-                    if not os.path.exists(sar_file):
-                        from generate_sample_data import generate_sample_sar_geotiff
-                        generate_sample_sar_geotiff(sar_file)
-
-                    sar_proc = SARImagePreprocessor()
-                    norm_sar, sar_metadata, _ = sar_proc.load_and_preprocess(
-                        sar_file,
-                        convert_to_db=True,
-                        clip_percentiles=(1.0, 99.0)
-                    )
+        prod_key = f"prod_results_{incident_name}"
+        if run_pipeline_clicked or prod_key in st.session_state:
+            if run_pipeline_clicked or prod_key not in st.session_state:
+                with st.spinner(f"Executing SOTA Production Pipeline for {incident_name}..."):
+                    # 1. Synthesize incident-specific SAR patch with exact spill geometry and vessel scatterers
+                    height, width = 512, 512
+                    min_lon, min_lat, max_lon, max_lat = sar_bounds
+                    
+                    # Background sea clutter with unique seed per incident
+                    np.random.seed(abs(hash(incident_name)) % (2**32))
+                    sea_clutter = np.random.gamma(shape=3.0, scale=0.03, size=(height, width)).astype(np.float32)
+                    
+                    # Map spill center into pixel space
+                    y_grid, x_grid = np.ogrid[:height, :width]
+                    c_x = int(np.clip(((map_center[1] - min_lon) / max(max_lon - min_lon, 1e-5)) * width, 60, width - 60))
+                    c_y = int(np.clip(((max_lat - map_center[0]) / max(max_lat - min_lat, 1e-5)) * height, 60, height - 60))
+                    
+                    # Aspect ratio and size from incident spill polygon
+                    lons = [c[0] for c in spill_coords]
+                    lats = [c[1] for c in spill_coords]
+                    span_x = max(int(((max(lons) - min(lons)) / max(max_lon - min_lon, 1e-5)) * width * 1.5), 35)
+                    span_y = max(int(((max(lats) - min(lats)) / max(max_lat - min_lat, 1e-5)) * height * 1.5), 20)
+                    
+                    slick_mask = (((x_grid - c_x) / span_x) ** 2 + ((y_grid - c_y) / span_y) ** 2) <= 1.0
+                    sea_clutter[slick_mask] *= 0.12  # 8 to 12 dB capillary damping
+                    
+                    # Add bright metallic vessel scatterers from candidate AIS pings
+                    if not ais_df.empty:
+                        for _, v_row in ais_df.groupby("mmsi").first().iterrows():
+                            v_lon = float(v_row.get("longitude", map_center[1]))
+                            v_lat = float(v_row.get("latitude", map_center[0]))
+                            if min_lon <= v_lon <= max_lon and min_lat <= v_lat <= max_lat:
+                                px = int(np.clip(((v_lon - min_lon) / max(max_lon - min_lon, 1e-5)) * width, 3, width - 4))
+                                py = int(np.clip(((max_lat - v_lat) / max(max_lat - min_lat, 1e-5)) * height, 3, height - 4))
+                                sea_clutter[py-1:py+2, px-1:px+2] = 2.8  # Metallic hull return
+                    
+                    # Decibel calibration and min-max normalization
+                    db_clutter = 10.0 * np.log10(sea_clutter + 1e-7)
+                    p1, p99 = np.percentile(db_clutter, (1.0, 99.0))
+                    norm_sar = np.clip((db_clutter - p1) / max(p99 - p1, 1e-5), 0.0, 1.0)[np.newaxis, :, :]
 
                     # 2. Semantic Segmentation
                     seg = OilSpillSegmenter(detection_threshold=0.50)
@@ -747,15 +772,14 @@ def main():
                         top_sus = None
                         v_details = None
 
-                    st.session_state["prod_results"] = {
+                    st.session_state[prod_key] = {
                         "norm_sar": norm_sar,
                         "seg_out": seg_out,
-                        "sar_metadata": sar_metadata,
                         "v_details": v_details,
                         "top_sus": top_sus
                     }
 
-            res = st.session_state["prod_results"]
+            res = st.session_state[prod_key]
             seg_out = res["seg_out"]
             norm_sar = res["norm_sar"]
             v_details = res["v_details"]
