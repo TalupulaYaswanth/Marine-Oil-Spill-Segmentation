@@ -1,220 +1,169 @@
-# 🛰️ Marine Oil Spill Segmentation & Vessel Attribution Pipeline
+# NaviSpill AI: Marine Oil Spill Segmentation and Vessel Attribution
 
-**Project Title:** Deep Learning-Based Marine Oil Spill Segmentation and Vessel Attribution Using Satellite Imagery and AIS Data  
-**Standard Profile:** SkyTruth Cerulean & EMSA CleanSeaNet Operational Benchmark  
-**Course/Project:** CSE471  
+[![Python 3.10](https://img.shields.io/badge/Python-3.10-blue.svg)](https://www.python.org/)
+[![PyTorch 2.14](https://img.shields.io/badge/PyTorch-2.14-ee4c2c.svg)](https://pytorch.org/)
+[![Tests](https://img.shields.io/badge/Tests-14%2F14%20Passed-brightgreen.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A student-level deep learning and geospatial intelligence system designed for automated marine oil spill detection from **Sentinel-1 Synthetic Aperture Radar (SAR)** imagery and multi-factor **Automatic Identification System (AIS)** candidate vessel attribution. Developed for the **CSE471 Capstone Project**.
 
 ---
 
-## 🌟 Executive Overview & Best Production Profile
+## 🌟 Key Features
 
-This system implements the state-of-the-art (SOTA) operational architecture modeled after **SkyTruth Cerulean** (the global gold standard for satellite oil spill surveillance) and the **European Maritime Safety Agency (EMSA CleanSeaNet)**.
+1. **Radiometric SAR Preprocessing (`src/preprocessing/sar_preprocessor.py`)**:
+   - Supports GeoTIFFs and standard raster formats (PNG, JPG).
+   - Rejects radar speckle via 1st-to-99th percentile contrast clipping.
+   - Robust NoData handling and min-max normalization to $[0.0, 1.0]$.
+   - Preserves affine geotransforms and Coordinate Reference Systems (CRS).
+   - Sliding-window tiling for large satellite footprints.
 
-It delivers a fully functional, end-to-end pipeline connecting:
-1. **Satellite Earth Observation (SAR):** Automated ingestion and decibel backscatter calibration ($\sigma^0$) of Sentinel-1 C-band Synthetic Aperture Radar imagery.
-2. **Deep Learning & Adaptive CFAR Segmentation:** Dual-mode semantic segmentation engine (PyTorch U-Net with BCE-Dice compound loss + EMSA CleanSeaNet Constant False Alarm Rate dark-spot detector) that isolates capillary wave damping anomalies.
-3. **Hydrodynamic Leeway Drift Backtracking:** Physics-based **NOAA ADIOS-2 / French CEDRE** surface leeway transport modeling with windage ($3.2\% U_{10}$), Coriolis deflection ($\pm 15^\circ$), and ambient tidal currents to backtrack slicks to the precise discharge origin point $T_0$.
-4. **AIS Spatiotemporal Forensic Attribution:** Sub-meter metric UTM distance calculation, trajectory reconstruction, and multi-criteria Bayesian attribution scoring (CPA, temporal offset, heading alignment, ship type risk) with hard physical causality enforcement.
-5. **Maritime Intelligence & Vessel Photo API:** High-resolution live vessel photo retrieval and vessel registration lookup (IMO, MMSI, Flag state, dimensions, deadweight tonnage) via MarineTraffic, VesselFinder, and Wikimedia Commons.
-6. **Interactive Dashboard & Automated Reporting:** Streamlit web console and automated generation of forensic casualty dossiers (Markdown, CSV, JSON, GeoJSON, and Leaflet HTML).
+2. **Pretrained U-Net Deep Learning Segmentation (`src/models/`, `src/training/`)**:
+   - Pretrained **ResNet-34** encoder adapted for single-channel grayscale SAR backscatter.
+   - Initialized with ImageNet weights via channel-averaged conv1 kernels.
+   - Hybrid loss function: $\mathcal{L}_{total} = 0.5 \cdot \mathcal{L}_{BCE} + 0.5 \cdot \mathcal{L}_{Dice}$ to conquer class imbalance.
+   - Produces probability maps, binary masks, and semi-transparent alert overlays.
+   - **Measured Test Set Performance**: IoU: **0.8272** | Dice (F1): **0.9054** | Precision: **0.8642** | Recall: **0.9509**.
+
+3. **Geospatial Vectorization (`src/attribution/vectorizer.py`)**:
+   - Extracts georeferenced Shapely polygons directly from binary masks using `rasterio.features.shapes`.
+   - Reprojects to metric Coordinate Reference Systems (EPSG:3857 Web Mercator) for exact physical area estimation in square kilometers ($km^2$).
+
+4. **Multi-Factor AIS Vessel Attribution (`src/attribution/ranker.py`)**:
+   - Ingests and cleans maritime AIS telemetry CSV files (UTC timestamps, SOG/COG sanity checks, coordinate validation).
+   - Constructs vessel trajectories (`LineString`) grouped by MMSI.
+   - Evaluates multi-factor score:
+     - Spatial distance to spill polygon (in metric km)
+     - Temporal delta to satellite overpass time
+     - Direct trajectory-spill intersection
+     - Cruising speed plausibility ($6-22$ knots) and vessel type risk weighting
+   - Prioritizes candidate vessels into risk categories: `HIGH`, `MEDIUM`, `LOW`, `NEGLIGIBLE`.
+   - One-click export to CSV and GeoJSON.
+
+5. **Interactive Tactical Streamlit Dashboard (`app.py`)**:
+   - Modern 4-tab user interface.
+   - Ingestion of SAR imagery (GeoTIFF/PNG) and AIS CSV telemetry.
+   - Dual view: Original SAR, Predicted Mask, and Composite Alert Overlay.
+   - Full-featured **Folium tactical map** displaying georeferenced spill clusters and vessel trajectory paths colored by risk tier.
+   - Prioritized candidate ranking table and configurable threshold sliders.
+   - Clear synthetic/benchmark dataset notifications and investigative disclaimers.
+
+---
+
+## 📁 Project Structure
 
 ```
-                   ┌────────────────────────────────────────────────────────┐
-                   │        Phase 1: Geospatial Remote Sensing Ingestion    │
-                   │        • Sentinel-1 SAR Calibration & Decibel Scaling  │
-                   │        • Universal Multi-Format AIS Ingestion (NOAA/DMA│
-                   └───────────────────────────┬────────────────────────────┘
-                                               │
-                                               ▼
-                   ┌────────────────────────────────────────────────────────┐
-                   │        Phase 2: Deep Learning Spill Segmentation       │
-                   │        • Single-Channel SAR U-Net / EMSA CFAR Hybrid   │
-                   │        • Compound BCE + Soft Dice Loss Formulation     │
-                   │        • Jaccard Index (IoU) & F1-Score Evaluation     │
-                   └───────────────────────────┬────────────────────────────┘
-                                               │
-                                               ▼
-                   ┌────────────────────────────────────────────────────────┐
-                   │        Phase 3: Vessel Detection & Attribution Engine  │
-                   │        • Local Metric UTM Projection (Sub-meter Acc.)  │
-                   │        • NOAA ADIOS Hydrodynamic Leeway Drift Physics  │
-                   │        • Spatiotemporal Attribution & Causality Scoring │
-                   └───────────────────────────┬────────────────────────────┘
-                                               │
-                                               ▼
-                   ┌────────────────────────────────────────────────────────┐
-                   │        Phase 4: SOTA Operational Console & Reports     │
-                   │        • 1-Click Master Production Execution Engine    │
-                   │        • Interactive Folium / Leaflet Marine Map       │
-                   │        • Verified Vessel Photo Intelligence Dossier    │
-                   │        • Open STAC Catalog Search (Planetary Computer) │
-                   └────────────────────────────────────────────────────────┘
+NaviSpill AI
+├── checkpoints/              # Saved model weights
+│   ├── best_model.pth        # Best trained checkpoint (Val IoU: 0.8371)
+│   └── latest_model.pth      # Epoch 2 checkpoint
+├── datasets/
+│   ├── raw/                  # Downloaded raw archives (Images.zip, Masked.zip)
+│   ├── processed/            # Processed 256x256 tiles and binary masks
+│   │   ├── sar_tiles/        # train (120), val (30), test (30)
+│   │   └── masks/            # train (120), val (30), test (30)
+│   └── sample/               # Calibrated benchmark demonstration data
+│       ├── sample_s1_scene.tif           # 512x512 GeoTIFF (EPSG:4326, Strait of Gibraltar)
+│       ├── sample_s1_mask.png            # Ground-truth spill mask
+│       └── sample_ais_trajectories.csv   # Synchronized AIS telemetry (5 vessels)
+├── docs/                     # Detailed architectural documentation
+│   ├── ARCHITECTURE.md       # Architectural diagrams & mathematical formulas
+│   ├── MODEL_CARD.md         # Architecture, weights, hyperparameters, loss
+│   └── LIMITATIONS.md        # Natural look-alikes, hardware, & ethical caveats
+├── experiments/              # Training curve logs & metrics JSON
+│   ├── test_metrics.json     # Measured test set metrics
+│   ├── training_history.json # Epoch losses and IoU progression
+│   └── training_curves.png   # Convergence plots
+├── reports/                  # Generated incident attribution reports (CSV/GeoJSON)
+├── src/                      # Modular Python package
+│   ├── preprocessing/        # SAR calibration & AIS cleaning
+│   │   ├── sar_preprocessor.py
+│   │   └── ais_preprocessor.py
+│   ├── models/               # U-Net architecture & hybrid loss
+│   │   ├── unet_resnet.py
+│   │   └── losses.py
+│   ├── training/             # PyTorch Dataset, training loop, inference
+│   │   ├── dataset.py
+│   │   ├── train.py
+│   │   └── inference.py
+│   └── attribution/          # GIS vectorization & vessel ranker
+│       ├── vectorizer.py
+│       └── ranker.py
+├── tests/                    # Automated pytest suite (14 unit & integration tests)
+├── .streamlit/               # Streamlit configuration
+│   └── config.toml
+├── app.py                    # Streamlit web application
+├── requirements.txt          # Core dependencies
+├── PROJECT_PLAN.md           # Master plan & milestones
+├── PROGRESS.md               # Live status checklist
+├── CHANGELOG.md              # Detailed chronological changelog
+├── DATASET_MANIFEST.md       # Provenance, licenses, formats
+├── TEST_REPORT.md            # Complete test execution logs
+└── DECISIONS.md              # Engineering trade-offs & rationale
 ```
 
 ---
 
-## ⚙️ Operational Best Profile Configuration (`configs/best_production_profile.yaml`)
+## 🚀 Installation & Execution
 
-| System Component | Production Specification | Operational Standard |
-| :--- | :--- | :--- |
-| **SAR Constellation** | Sentinel-1A / Sentinel-1B (C-Band, 5.405 GHz) | Copernicus Open Access Hub |
-| **Acquisition Mode** | Interferometric Wide Swath (IW), GRD High Resolution | 10m pixel spacing, 250 km swath |
-| **Polarization** | Co-Polarization VV (primary) + Cross-Polarization VH | Dual-Pol SAR |
-| **Radiometric Scaling** | $\sigma^0 = 10 \log_{10}(I + \epsilon)$ (decibels) | Dynamic range: $[-30\text{ dB}, 0\text{ dB}]$ |
-| **Speckle Filter** | Enhanced Lee Filter (5x5 kernel) | Percentile clipping: 1st–99th |
-| **Segmentation Engine** | U-Net 5-Stage Convolutional Encoder-Decoder / EMSA CFAR | Balanced BCE + Soft Dice (50/50) |
-| **Detection Threshold** | $P \ge 0.50$, Minimum slick area threshold: $0.15\text{ km}^2$ | Filters biogenic look-alikes |
-| **Hydrodynamic Drift** | NOAA ADIOS-2 / CEDRE Leeway Drift Model | $100\%\text{ current} + 3.2\%\text{ wind} \pm 15^\circ\text{ Coriolis}$ |
-| **Search Radius** | 25.0 km candidate buffer around slick boundary | Temporal window: $\pm 6.0\text{ hours}$ |
-| **Attribution Weights** | Spatial CPA: 40%, Temporal: 30%, Heading: 15%, Ship Risk: 15% | Physical causality ($\Delta t < -30\text{m}$ penalized) |
-| **Vessel Photo APIs** | MarineTraffic, VesselFinder, Wikimedia Commons, EQUASIS | Verified vessel photo & registry |
-
----
-
-## 🌊 Benchmark Real-World Incidents Included
-
-### 1. 🌊 The MV Wakashio Coral Reef Disaster (Mauritius, Aug 2020)
-- **Copernicus EMS Rapid Mapping Activation:** `EMSR449`
-- **Primary Casualty:** *MV WAKASHIO* (MMSI: `372711000`, IMO: `9337779`, Flag: Panama, 300m Capesize Bulk Carrier, 203,130 DWT).
-- **Casualty Location:** Pointe d'Esny coral reef (`-20.4430°S, 57.7470°E`), discharging ~1,000 tonnes of heavy bunker fuel into a pristine marine park.
-- **Satellite Observation:** Sentinel-1A IW GRD (`S1A_IW_GRDH_1SDV_20200810T015311_...`).
-- **Telemetry Monitored:** MV Wakashio, Mauritian National Coast Guard (*CGS Barracuda*), salvage tugs (*Sir Gaetan Duval*), bunker tanker (*Tresta Star*), and transiting cargo vessels.
-- **Environmental Forcing:** Southeast Trade Winds (115° at 18.5 knots), South Equatorial Current (0.32 m/s flowing Northwest directly into the lagoon).
-
-### 2. 🚢 Strait of Gibraltar Marine Highway Corridor (Mediterranean Gateway)
-- **Maritime Setting:** High-density Traffic Separation Scheme (TSS) linking the Atlantic Ocean and Mediterranean Sea.
-- **Vessel Traffic:** Real IMO-registered Aframax Crude Oil Tankers (*Alexandra I*), Ultra Large Container Ships (*CMA CGM Montmartre*), and regional escort tugs (*VB Gibraltar*).
-- **Satellite Observation:** Sentinel-1A IW GRD (`S1A_IW_GRDH_1SDV_20240515T063012_...`).
-
----
-
-## 🚀 Execution Guide: Making the Project Work
-
-### 1. Run Master Production Pipeline (One Command)
-Execute the complete SkyTruth Cerulean end-to-end pipeline:
+### 1. Environment Setup
+Clone the repository and install required dependencies:
 ```bash
-# Execute on MV Wakashio Coral Reef Disaster
-python run_production_pipeline.py --incident wakashio
-
-# Execute on Strait of Gibraltar Marine Highway Corridor
-python run_production_pipeline.py --incident gibraltar
-
-# Execute with custom candidate search radius (e.g. 30 km)
-python run_production_pipeline.py --incident wakashio --threshold-km 30.0
+cd "C:\Users\Admin\Desktop\NaviSpill AI"
+pip install -r requirements.txt
 ```
-**Artifacts Generated in `output/production/`:**
-- `interactive_marine_map.html`: Standalone interactive Leaflet maritime situation map.
-- `forensic_investigation_report.md`: Complete maritime pollution investigation report.
-- `attribution_rankings.csv`: Ranked candidate polluter vessels with attribution scores.
-- `spill_footprint.geojson`: Vectorized oil slick boundary polygon.
-- `primary_suspect_dossier.json`: Comprehensive JSON telemetry and identity dossier.
-- `calibrated_sar.png`: Radiometrically calibrated radar backscatter preview.
-- `segmentation_overlay.png`: Dual-panel SAR scene vs slick probability heatmap.
 
----
-
-### 2. Run Individual Architecture Phases
-
+### 2. Run Automated Test Suite
+Verify that all unit and integration tests pass:
 ```bash
-# Phase 1: SAR & AIS Geospatial Preprocessing
-python run_phase1.py
-
-# Phase 2: Segmentation Model Training & CFAR Validation
-python train_segmentation.py
-
-# Phase 3: Vessel Attribution & Causality Scoring
-python run_phase3.py
+python -m pytest tests/ -v
 ```
+*(All 14 tests pass covering preprocessing, model forward pass, checkpoint saving, loss functions, polygon vectorization, attribution scoring, and end-to-end integration).*
 
----
-
-### 3. Launch Interactive Web Dashboard
-
-Launch the full-featured Streamlit console locally:
+### 3. Launch the Interactive Dashboard
+Launch the Streamlit web interface:
 ```bash
 streamlit run app.py
 ```
-Open **[http://localhost:8501](http://localhost:8501)** in your browser.
+Open your browser and navigate to: **`http://localhost:8501`**
 
 ---
 
-### 4. ☁️ Deploy to Render (Cloud Hosting)
+## 🧪 Training & Evaluation
 
-Deploy the entire dashboard to **Render (render.com)** with one click:
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/TalupulaYaswanth/Marine-Oil-Spill-Segmentation)
-
-- **Automated Blueprint:** Uses [`render.yaml`](render.yaml) to automatically configure build scripts, Python 3.11 environment, dynamic `$PORT` binding, and health checks.
-- **Docker Support:** Ready for containerized deployment with [`Dockerfile`](Dockerfile).
-- **Comprehensive Guide:** See [`docs/RENDER_DEPLOYMENT_GUIDE.md`](docs/RENDER_DEPLOYMENT_GUIDE.md) for full step-by-step instructions.
+To re-train or fine-tune the model on custom SAR tiles:
+```bash
+python -m src.training.train
+```
+- By default, trains with batch size $4$ using AdamW and Cosine Annealing learning rate.
+- Automatically saves the best checkpoint to `checkpoints/best_model.pth`.
+- Evaluates the model on the held-out test set and saves convergence curves to `experiments/training_curves.png`.
 
 ---
 
-## 📂 Repository Structure
+## 📊 Measured Model Performance
 
-```
-├── .streamlit/
-│   └── config.toml                    # Streamlit server & dark theme configuration
-├── configs/
-│   └── best_production_profile.yaml   # SkyTruth Cerulean & EMSA CleanSeaNet Profile
-├── data/
-│   ├── sample_ais.csv                 # Benchmark multi-vessel AIS telemetry
-│   ├── S1A_IW_GRDH_...sample.tif      # Synthetic calibrated Sentinel-1 SAR scene
-│   └── real_world/                    # Real Copernicus EMS incidents (Wakashio & Gibraltar)
-├── docs/
-│   ├── TECHNICAL_REPORT.md            # Comprehensive research report & architecture
-│   └── RENDER_DEPLOYMENT_GUIDE.md     # Step-by-step cloud deployment manual
-├── output/
-│   ├── phase1/                        # Preprocessed SAR rasters & filtered pings
-│   ├── phase3/                        # Attribution rankings CSV
-│   └── production/                    # Production dossier, reports, maps & heatmaps
-├── src/
-│   ├── sar_preprocessor.py            # Radiometric dB calibration & multi-backend loader
-│   ├── ais_preprocessor.py            # AIS ingestion & spatiotemporal filtering
-│   ├── pipeline.py                    # Phase 1 orchestration pipeline
-│   ├── ais_loader.py                  # Universal NOAA/DMA/MarineTraffic loader
-│   ├── stac_client.py                 # Open STAC client (Planetary Computer / AWS)
-│   ├── live_monitor.py                # Live NOAA emergency spills & radar feed
-│   ├── vessel_image_api.py            # MarineTraffic / VesselFinder photo resolver
-│   ├── segmentation/
-│   │   ├── inference.py               # Production Hybrid Segmenter (PyTorch + EMSA CFAR)
-│   │   ├── unet.py                    # PyTorch Single-Channel SAR U-Net
-│   │   ├── losses.py                  # BCEDiceLoss & IoU/F1 MetricTracker
-│   │   ├── dataset.py                 # PyTorch SAR Dataset with augmentations
-│   │   └── trainer.py                 # Checkpointing & validation loop
-│   └── attribution/
-│       ├── engine.py                  # Multi-criteria Bayesian attribution engine
-│       ├── drift_physics.py           # NOAA ADIOS-2 leeway drift & backtracking
-│       └── vectorizer.py              # Mask to Shapely Polygon georeferenced vectorizer
-├── app.py                             # Full-featured Streamlit interactive console
-├── build.sh                           # Render cloud build script
-├── Dockerfile                         # Production container definition
-├── Procfile                           # Web process definition for cloud hosts
-├── render.yaml                        # Render Infrastructure Blueprint (IaC)
-├── requirements.txt                   # Production Python dependencies
-├── run_production_pipeline.py         # Master production pipeline CLI
-├── run_phase1.py                      # Phase 1 runner
-├── train_segmentation.py              # Phase 2 runner
-├── run_phase3.py                      # Phase 3 runner
-└── test_system_integrity.py           # 16-point diagnostic test suite
-```
-│   │   ├── inference.py               # Production Hybrid Segmenter (PyTorch + EMSA CFAR)
-│   │   ├── unet.py                    # PyTorch Single-Channel SAR U-Net
-│   │   ├── losses.py                  # BCEDiceLoss & IoU/F1 MetricTracker
-│   │   ├── dataset.py                 # PyTorch SAR Dataset with augmentations
-│   │   └── trainer.py                 # Checkpointing & validation loop
-│   └── attribution/
-│       ├── engine.py                  # Multi-criteria Bayesian attribution engine
-│       ├── drift_physics.py           # NOAA ADIOS-2 leeway drift & backtracking
-│       └── vectorizer.py              # Mask to Shapely Polygon georeferenced vectorizer
-├── app.py                             # Full-featured Streamlit interactive console
-├── run_production_pipeline.py         # Master production pipeline CLI
-├── run_phase1.py                      # Phase 1 runner
-├── train_segmentation.py              # Phase 2 runner
-└── run_phase3.py                      # Phase 3 runner
-```
+Evaluated on the held-out test set (`datasets/processed/sar_tiles/test`):
+
+| Metric | Score | Description |
+|---|---|---|
+| **Intersection over Union (IoU)** | **0.8272** | Overlap accuracy on oil spill pixels |
+| **Dice Coefficient (F1 Score)** | **0.9054** | Harmonic mean of precision and recall |
+| **Precision** | **0.8642** | Low rate of false positives on sea clutter |
+| **Recall (Sensitivity)** | **0.9509** | High capture rate of dark spill formations |
+| **Evaluation Loss** | **0.1706** | Hybrid BCE + Dice Loss |
 
 ---
 
-## 📜 License & Compliance
-This software adheres to open geospatial data standards (OGC GeoTIFF, GeoJSON, EPSG:4326) and maritime safety conventions (IMO SOLAS Regulation V/19).
+## ⚖️ Legal & Investigative Disclaimer
+
+> **ATTENTION**: The computed attribution score and candidate vessel ranking are designed strictly as **investigative prioritization aids** based on spatio-temporal telemetry, kinematics, and geometric proximity. They **do NOT constitute legal or judicial proof of liability**. Innocent vessels may cross pre-existing slicks discharged by earlier non-transmitting vessels ("dark vessels"). Ground-truth verification requires physical oceanic chemical sampling or aerial surveillance.
+
+---
+
+## 📜 Dataset Provenance & Licenses
+
+- **Satellite SAR Imagery**: Derived from the public MIT-licensed satellite dataset (`Thadzy/Oilspill`, Hugging Face).
+- **Pretrained Encoder Weights**: ResNet-34 ImageNet weights under the BSD 3-Clause License.
+- **AIS Telemetry**: Structured following US Coast Guard (MarineCadastre.gov) public-domain standards.
+- **Project License**: MIT License.
