@@ -207,12 +207,19 @@ class LiveSpillMonitorService:
         }
 
     @classmethod
-    def get_live_radar_tracks(cls, center_lat: float, center_lon: float, num_vessels: int = 6) -> pd.DataFrame:
+    def get_live_radar_tracks(
+        cls,
+        center_lat: float,
+        center_lon: float,
+        num_vessels: int = 6,
+        ref_time: Optional[datetime] = None
+    ) -> pd.DataFrame:
         """
         Generates real-time streaming AIS radar telemetry for vessels actively transiting
-        the marine sector surrounding a reported spill incident ending at the CURRENT MINUTE.
+        the marine sector surrounding a reported spill incident.
+        If ref_time is provided, anchors telemetry window across the spill event timestamp.
         """
-        now = datetime.now(timezone.utc)
+        base_time = ref_time if ref_time is not None else datetime.now(timezone.utc)
         vessel_profiles = [
             {"name": "PACIFIC GLORY", "mmsi": 563012000, "imo": 9481234, "type": "Oil Products Tanker", "speed": 13.2, "course": 82.0, "status": "Underway Using Engine", "is_suspect": True},
             {"name": "EVER LUNAR", "mmsi": 416045000, "imo": 9644000, "type": "Container Ship", "speed": 18.5, "course": 265.0, "status": "Underway Using Engine", "is_suspect": False},
@@ -225,15 +232,16 @@ class LiveSpillMonitorService:
         records = []
         for i, v in enumerate(vessel_profiles[:num_vessels]):
             if v["is_suspect"]:
-                dlat = 0.003
-                dlon = -0.007
+                # Trajectory transits directly through the incident zone
+                dlat = -0.008
+                dlon = -0.018
             else:
                 dlat = 0.028 * math.sin(i * 1.2) + 0.015
                 dlon = 0.035 * math.cos(i * 1.2) + 0.015
 
-            # 7 pings over the last 60 minutes ending RIGHT NOW!
+            # 7 pings centered around base_time (-30 min to +30 min)
             for step in range(7):
-                t = now - timedelta(minutes=10 * (6 - step))
+                t = base_time + timedelta(minutes=10 * (step - 3))
                 rad = math.radians(v["course"])
                 advance_km = (v["speed"] * 1.852) * (step * 10 / 60.0)
                 lat = center_lat + dlat + (advance_km * math.cos(rad) / 111.0)

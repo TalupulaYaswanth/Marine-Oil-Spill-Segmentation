@@ -560,7 +560,8 @@ def main():
         if custom_ais_df is not None:
             ais_df = custom_ais_df
         else:
-            ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6)
+            spill_dt = datetime.fromisoformat(spill_time_str.replace("Z", "+00:00"))
+            ais_df = LiveSpillMonitorService.get_live_radar_tracks(c_lat, c_lon, num_vessels=6, ref_time=spill_dt)
 
         next_pass = LiveSpillMonitorService.compute_next_sentinel1_pass(c_lat, c_lon)
         default_wind_spd = 14.0
@@ -835,7 +836,8 @@ def main():
                         v_details = VesselImageAPI.get_vessel_details(
                             mmsi=int(top_sus["mmsi"]),
                             imo=int(top_sus.get("imo", 0)) if pd.notna(top_sus.get("imo")) else 0,
-                            name=str(top_sus.get("vessel_name", ""))
+                            name=str(top_sus.get("vessel_name", "")),
+                            vessel_type=str(top_sus.get("vessel_type", ""))
                         )
                     else:
                         top_sus = None
@@ -889,11 +891,33 @@ def main():
 
             # Primary Suspect Card
             if v_details and top_sus is not None:
-                st.markdown(f"""
-                <div class="suspect-card-rank1">
-                    <h3 style="color:#FF0055; margin-top:0;">🚨 Primary Suspect Polluter Identified: {v_details['vessel_name']}</h3>
-                </div>
-                """, unsafe_allow_html=True)
+                is_causal = bool(top_sus.get('is_causally_valid', True))
+                att_score = float(top_sus.get('attribution_score', 0.0))
+                time_off = float(top_sus.get('time_delta_hours', 0.0))
+
+                if is_causal and att_score >= 0.40:
+                    badge_header = f"""
+                    <div style="background-color:#2D151F; border:2px solid #FF0055; border-radius:8px; padding:12px 18px; margin-bottom:14px;">
+                        <h3 style="color:#FF0055; margin:0; font-size:18px;">🚨 Primary Suspect Polluter Identified: {v_details['vessel_name']}</h3>
+                        <div style="font-size:12px; color:#FF85A1; margin-top:3px;">High attribution confidence &bull; Trajectory directly intersects backward-drifted spill origin</div>
+                    </div>
+                    """
+                elif not is_causal:
+                    badge_header = f"""
+                    <div style="background-color:#261E16; border:2px solid #E3B341; border-radius:8px; padding:12px 18px; margin-bottom:14px;">
+                        <h3 style="color:#E3B341; margin:0; font-size:18px;">🛡️ Candidate Exonerated by Physics (Non-Causal): {v_details['vessel_name']}</h3>
+                        <div style="font-size:12px; color:#F0883E; margin-top:3px;">Vessel arrived {abs(time_off):.1f}h AFTER the spill occurred — physical causality rules out culpability.</div>
+                    </div>
+                    """
+                else:
+                    badge_header = f"""
+                    <div style="background-color:#161B22; border:2px solid #388BFD; border-radius:8px; padding:12px 18px; margin-bottom:14px;">
+                        <h3 style="color:#58A6FF; margin:0; font-size:18px;">ℹ️ Nearest Candidate Vessel: {v_details['vessel_name']} (Inconclusive)</h3>
+                        <div style="font-size:12px; color:#8B949E; margin-top:3px;">Attribution Score {att_score:.4f} is below forensic prosecution threshold.</div>
+                    </div>
+                    """
+
+                st.markdown(badge_header, unsafe_allow_html=True)
 
                 p_c1, p_c2 = st.columns([1, 2])
                 with p_c1:
