@@ -303,7 +303,7 @@ def test_vessel_image_api():
     )
     assert details["vessel_name"] is not None
     assert details["image_url"] is not None
-    assert details["image_url"].startswith("http")
+    assert details["image_url"].startswith("http") or os.path.exists(details["image_url"])
     assert details["flag"] is not None
 
 

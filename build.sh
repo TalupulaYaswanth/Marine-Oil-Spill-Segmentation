@@ -13,6 +13,7 @@ pip install -r requirements.txt
 echo "=== [3/4] Pre-Generating Synthetic Benchmark SAR & AIS Data ==="
 python generate_sample_data.py
 python create_test_samples.py
+python setup_vessel_assets.py
 python src/setup_real_world_data.py || true
 
 echo "=== [4/4] Verifying Pipeline Integrity ==="
